@@ -22,6 +22,11 @@ const HELLO_RETRY: Duration = Duration::from_millis(500);
 const PING_INTERVAL: Duration = Duration::from_millis(500);
 /// A hello that never gets a welcome times out.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+/// Retry cadence and budget for reliable client->server resource events.
+const EVENT_RETRY: Duration = Duration::from_millis(500);
+const EVENT_MAX_ATTEMPTS: u32 = 8;
+/// How many recent reliable server events to remember for deduplication.
+const REMOTE_EVENT_HISTORY: usize = 256;
 
 /// A remote member as advertised by the server roster.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,6 +34,18 @@ pub(crate) struct PeerInfo {
     pub actor: u64,
     pub rig: u64,
     pub display_name: String,
+}
+
+/// One script/mod event received this frame.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct EventNotice {
+    /// Envelope actor. For server-originated events this is the recipient (the
+    /// local actor); a future peer relay would carry the origin actor here.
+    pub actor: u64,
+    pub resource: String,
+    pub name: String,
+    /// Opaque payload, JSON by convention.
+    pub payload: Vec<u8>,
 }
 
 /// What the session produced this frame.
@@ -42,6 +59,16 @@ pub(crate) struct Polled {
     pub applications: Vec<(u64, String, u32, Vec<u8>)>,
     /// Chat lines received this frame as (origin actor, seq, text).
     pub chats: Vec<(u64, u32, String)>,
+    /// Resource events received this frame, deduplicated.
+    pub events: Vec<EventNotice>,
+}
+
+/// One outbound reliable event awaiting an ack. The encoded envelope is kept
+/// so a retransmission is byte-identical to the original.
+struct PendingEvent {
+    envelope: Vec<u8>,
+    sent: Instant,
+    attempts: u32,
 }
 
 /// Client state for one connection to the server.
@@ -68,6 +95,18 @@ pub(crate) struct SkatedSession {
     pose_seq: u32,
     app_seq: u32,
     chat_seq: u32,
+    // Resource-event send state. It is exercised by the scripting bridge
+    // (`sdk.net.emit_server`) once installed; until then the client can still
+    // receive and acknowledge server events through `Polled::events`.
+    #[allow(dead_code)]
+    event_seq: u32,
+    #[allow(dead_code)]
+    next_event_id: u64,
+    /// Outbound reliable events awaiting a server ack, keyed by message id.
+    pending_events: std::collections::BTreeMap<u64, PendingEvent>,
+    /// Recently seen reliable server event ids, for deduplication.
+    remote_event_seen: std::collections::HashSet<u64>,
+    remote_event_order: std::collections::VecDeque<u64>,
 
     pub peers: std::collections::BTreeMap<u64, PeerInfo>,
     /// Latest application records seen per (actor, key), for names and mod state.
@@ -106,6 +145,11 @@ impl SkatedSession {
             pose_seq: 0,
             app_seq: 0,
             chat_seq: 0,
+            event_seq: 0,
+            next_event_id: 0,
+            pending_events: std::collections::BTreeMap::new(),
+            remote_event_seen: std::collections::HashSet::new(),
+            remote_event_order: std::collections::VecDeque::new(),
             peers: std::collections::BTreeMap::new(),
             applications: std::collections::BTreeMap::new(),
             roster_changed: false,
@@ -177,6 +221,7 @@ impl SkatedSession {
     pub fn poll(&mut self, info: &v1::ClientInfo, display_name: &str) -> Polled {
         self.retry_handshake(info, display_name);
         self.keepalive();
+        self.retry_events();
 
         let mut out = Polled::default();
         // A relayed BODY snapshot (33 bodies with full poses and rates) can be
@@ -231,7 +276,6 @@ impl SkatedSession {
     }
 
     fn handle(&mut self, envelope: v1::Envelope, out: &mut Polled) {
-        let origin = envelope.actor_id;
         match envelope.message {
             Some(v1::envelope::Message::Reject(reject)) => {
                 self.notice = format!("Session rejected: {}", reject.detail);
@@ -243,6 +287,11 @@ impl SkatedSession {
                 self.epoch = welcome.epoch;
                 self.connected = true;
                 self.notice.clear();
+                // A fresh session invalidates any ids/envelopes queued for the
+                // previous one; the server would drop their stale session.
+                self.pending_events.clear();
+                self.remote_event_seen.clear();
+                self.remote_event_order.clear();
                 self.apply_roster(welcome.roster);
                 // Announce liveness immediately: the game may block for seconds
                 // loading assets before the next frame runs poll(), and the
@@ -264,8 +313,33 @@ impl SkatedSession {
             Some(v1::envelope::Message::Snapshot(snapshot)) => {
                 self.apply_snapshot(snapshot, out);
             }
-            Some(v1::envelope::Message::Chat(chat)) => {
-                out.chats.push((origin, chat.seq, chat.text));
+            Some(v1::envelope::Message::Event(event)) => {
+                let reliable =
+                    event.delivery == v1::EventDelivery::Reliable as i32 && event.message_id != 0;
+                if reliable {
+                    // Acknowledge every copy so the server can stop retransmitting,
+                    // but only surface the first delivery to the game.
+                    self.send_event_ack(event.message_id, true, "");
+                    if !self.remember_remote_event(event.message_id) {
+                        return;
+                    }
+                }
+                // Chat is a resource event; decode it for the local scrollback
+                // as well as exposing it on the generic channel.
+                if event.resource == "chat" && event.name == "message" {
+                    if let Ok(chat) = v1::ChatMessage::decode(event.payload.as_slice()) {
+                        out.chats.push((event.origin_actor, chat.seq, chat.text));
+                    }
+                }
+                out.events.push(EventNotice {
+                    actor: event.origin_actor,
+                    resource: event.resource,
+                    name: event.name,
+                    payload: event.payload,
+                });
+            }
+            Some(v1::envelope::Message::EventAck(ack)) => {
+                self.pending_events.remove(&ack.message_id);
             }
             _ => {}
         }
@@ -390,20 +464,136 @@ impl SkatedSession {
         self.send_envelope(v1::envelope::Message::Snapshot(snapshot));
     }
 
-    /// Publishes a chat line to the lobby. Delivery is best-effort over UDP,
-    /// like the rest of the protocol; the server echoes the line back with the
-    /// authoritative actor and ordering, so the sender does not render it
-    /// locally. Callers pass already-sanitised, length-limited text.
+    /// Publishes a chat line to the lobby as a reliable `chat:send` resource
+    /// event. The server is authoritative: it re-validates, rate-limits and
+    /// echoes the line back as a `chat:message` event with the assigned author,
+    /// so the sender does not render it locally. Callers pass raw text; the
+    /// server sanitises and length-limits it.
     pub fn publish_chat(&mut self, text: String) {
         if !self.connected {
             return;
         }
         self.chat_seq = self.chat_seq.wrapping_add(1);
         let sent_ms = self.started.elapsed().as_millis() as u64;
-        self.send_envelope(v1::envelope::Message::Chat(v1::ChatMessage {
+        let payload = v1::ChatMessage {
             seq: self.chat_seq,
             text,
             sent_ms,
+        }
+        .encode_to_vec();
+        self.publish_event("chat", "send", payload, true);
+    }
+
+    /// Publishes a script/mod event to the server. `reliable` events are
+    /// retransmitted until the server acknowledges them and are deduplicated
+    /// server-side, so a handler never runs twice for the same id. Returns the
+    /// message id (0 for unreliable), which the server echoes in its ack.
+    ///
+    /// This is the transport entry point for the scripting bridge; until that
+    /// bridge lands, nothing in the engine calls it yet.
+    #[allow(dead_code)]
+    pub fn publish_event(
+        &mut self,
+        resource: &str,
+        name: &str,
+        payload: Vec<u8>,
+        reliable: bool,
+    ) -> u64 {
+        if !self.connected {
+            return 0;
+        }
+        self.event_seq = self.event_seq.wrapping_add(1);
+        let message_id = if reliable {
+            self.next_event_id = self.next_event_id.wrapping_add(1);
+            self.next_event_id
+        } else {
+            0
+        };
+        let nonce = self.next_nonce();
+        let envelope = v1::Envelope {
+            protocol_version: skate_proto::PROTOCOL_VERSION,
+            session_id: self.session_id,
+            actor_id: self.actor_id,
+            nonce,
+            message: Some(v1::envelope::Message::Event(v1::ResourceEvent {
+                resource: resource.to_owned(),
+                name: name.to_owned(),
+                message_id,
+                delivery: if reliable {
+                    v1::EventDelivery::Reliable as i32
+                } else {
+                    v1::EventDelivery::Unreliable as i32
+                },
+                seq: self.event_seq,
+                payload,
+                // Stamped by the server from the authenticated session.
+                origin_actor: 0,
+            })),
+        };
+        if let Some(bytes) = encode_envelope(&envelope) {
+            let _ = self.socket.send_to(&bytes, self.server);
+            if reliable {
+                self.pending_events.insert(
+                    message_id,
+                    PendingEvent {
+                        envelope: bytes,
+                        sent: Instant::now(),
+                        attempts: 1,
+                    },
+                );
+            }
+        }
+        message_id
+    }
+
+    /// Retransmits outbound reliable events whose ack has not arrived, dropping
+    /// those past the retry budget.
+    fn retry_events(&mut self) {
+        if self.pending_events.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        let socket = &self.socket;
+        let server = self.server;
+        let mut expired = Vec::new();
+        for (id, ev) in self.pending_events.iter_mut() {
+            if now.duration_since(ev.sent) < EVENT_RETRY {
+                continue;
+            }
+            if ev.attempts >= EVENT_MAX_ATTEMPTS {
+                expired.push(*id);
+                continue;
+            }
+            let _ = socket.send_to(&ev.envelope, server);
+            ev.sent = now;
+            ev.attempts += 1;
+        }
+        for id in expired {
+            self.pending_events.remove(&id);
+        }
+    }
+
+    /// Records a reliable server event id, returning false when it is a
+    /// duplicate retransmission. The history is bounded.
+    fn remember_remote_event(&mut self, id: u64) -> bool {
+        if !self.remote_event_seen.insert(id) {
+            return false;
+        }
+        self.remote_event_order.push_back(id);
+        while self.remote_event_order.len() > REMOTE_EVENT_HISTORY {
+            if let Some(old) = self.remote_event_order.pop_front() {
+                self.remote_event_seen.remove(&old);
+            }
+        }
+        true
+    }
+
+    /// Acknowledges a reliable server event so it leaves the retransmit queue.
+    fn send_event_ack(&mut self, message_id: u64, accepted: bool, detail: &str) {
+        self.send_envelope(v1::envelope::Message::EventAck(v1::ResourceEventAck {
+            message_id,
+            accepted,
+            detail: detail.to_owned(),
         }));
     }
 
@@ -418,6 +608,14 @@ impl SkatedSession {
 }
 
 // --- Codec between engine types and prost types ------------------------------
+
+/// Encodes an envelope once, so a reliable event can be retransmitted
+/// byte-identically without re-encoding.
+#[allow(dead_code)]
+fn encode_envelope(envelope: &v1::Envelope) -> Option<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(128);
+    envelope.encode(&mut bytes).ok().map(|_| bytes)
+}
 
 fn pack_pose(pose: Pose) -> v1::Pose {
     v1::Pose {
@@ -629,27 +827,42 @@ mod tests {
         }
     }
 
-    /// A chat line survives the Protobuf round-trip with its author intact.
+    /// A chat line travels as a `chat:send` resource event payload and keeps
+    /// its author in `origin_actor` on the way back.
     #[test]
-    fn chat_round_trips_through_protobuf() {
+    fn chat_round_trips_as_a_resource_event() {
         let message = v1::ChatMessage {
             seq: 7,
             text: "hello lobby".into(),
             sent_ms: 99,
+        };
+        let event = v1::ResourceEvent {
+            resource: "chat".into(),
+            name: "send".into(),
+            message_id: 5,
+            delivery: v1::EventDelivery::Reliable as i32,
+            seq: 7,
+            payload: message.encode_to_vec(),
+            origin_actor: 42,
         };
         let envelope = v1::Envelope {
             protocol_version: skate_proto::PROTOCOL_VERSION,
             session_id: 1,
             actor_id: 42,
             nonce: 3,
-            message: Some(v1::envelope::Message::Chat(message.clone())),
+            message: Some(v1::envelope::Message::Event(event)),
         };
         let mut bytes = Vec::new();
         envelope.encode(&mut bytes).unwrap();
         let decoded = v1::Envelope::decode(bytes.as_slice()).unwrap();
         assert_eq!(decoded.actor_id, 42);
         match decoded.message {
-            Some(v1::envelope::Message::Chat(chat)) => assert_eq!(chat, message),
+            Some(v1::envelope::Message::Event(event)) => {
+                assert_eq!(event.origin_actor, 42);
+                assert_eq!(event.resource, "chat");
+                let chat = v1::ChatMessage::decode(event.payload.as_slice()).unwrap();
+                assert_eq!(chat, message);
+            }
             other => panic!("unexpected message: {other:?}"),
         }
     }

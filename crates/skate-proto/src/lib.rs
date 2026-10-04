@@ -16,8 +16,9 @@ pub mod v1 {
 }
 
 /// Protocol revision this build speaks. Must match `protocol.Version` in the
-/// Go server and [`crate::envelope`]'s documented value.
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Go server and [`crate::envelope`]'s documented value. v2 moved chat onto the
+/// resource event plane (`chat:send` / `chat:message`).
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[cfg(test)]
 mod tests {
@@ -50,6 +51,51 @@ mod tests {
         envelope.encode(&mut bytes).expect("encode");
         let decoded = v1::Envelope::decode(bytes.as_slice()).expect("decode");
         assert_eq!(decoded, envelope);
+    }
+
+    #[test]
+    fn resource_event_round_trips() {
+        let event = v1::ResourceEvent {
+            resource: "race".into(),
+            name: "join".into(),
+            message_id: 42,
+            delivery: v1::EventDelivery::Reliable as i32,
+            seq: 7,
+            payload: b"{\"lap\":1}".to_vec(),
+            origin_actor: 9,
+        };
+        let ack = v1::ResourceEventAck {
+            message_id: 42,
+            accepted: true,
+            detail: String::new(),
+        };
+        let envelope = v1::Envelope {
+            protocol_version: PROTOCOL_VERSION,
+            session_id: 1,
+            actor_id: 7,
+            nonce: 2,
+            message: Some(v1::envelope::Message::Event(event.clone())),
+        };
+        let mut bytes = Vec::new();
+        envelope.encode(&mut bytes).expect("encode");
+        match v1::Envelope::decode(bytes.as_slice()).unwrap().message {
+            Some(v1::envelope::Message::Event(back)) => assert_eq!(back, event),
+            other => panic!("unexpected message: {other:?}"),
+        }
+
+        let envelope = v1::Envelope {
+            protocol_version: PROTOCOL_VERSION,
+            session_id: 1,
+            actor_id: 7,
+            nonce: 3,
+            message: Some(v1::envelope::Message::EventAck(ack.clone())),
+        };
+        let mut bytes = Vec::new();
+        envelope.encode(&mut bytes).expect("encode");
+        match v1::Envelope::decode(bytes.as_slice()).unwrap().message {
+            Some(v1::envelope::Message::EventAck(back)) => assert_eq!(back, ack),
+            other => panic!("unexpected message: {other:?}"),
+        }
     }
 
     #[test]

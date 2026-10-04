@@ -1043,6 +1043,22 @@ fn receive_from_server(net: &mut Multiplayer, now: u64) {
         }
     }
 
+    // Resource events are the extensible script/mod plane. Surface the ones the
+    // game does not already consume on the log channel until the scripting
+    // bridge subscribes to `Polled::events`. Chat is handled above.
+    for event in &polled.events {
+        if event.resource == "chat" {
+            continue;
+        }
+        info!(
+            "NETWORK_EVENT actor={} resource={} name={} bytes={}",
+            event.actor,
+            event.resource,
+            event.name,
+            event.payload.len()
+        );
+    }
+
     // Drop remotes no longer in the roster, and stall out silent ones.
     let roster: std::collections::BTreeSet<u64> =
         net.server.as_ref().unwrap().peers.keys().copied().collect();
