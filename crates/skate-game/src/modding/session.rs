@@ -67,7 +67,7 @@ impl Runtime {
         }
     }
 }
-pub(super) fn spawn_matrix(position: [f32; 3], heading: Option<f32>) -> [[f32; 4]; 4] {
+pub(crate) fn spawn_matrix(position: [f32; 3], heading: Option<f32>) -> [[f32; 4]; 4] {
     let mut result = IDENTITY;
     let h = heading.unwrap_or(0.);
     result[2] = [h.sin(), 0., h.cos(), 0.];

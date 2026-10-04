@@ -111,6 +111,21 @@ to `logs/…/server.log` via `-logfile`.
 `cargo run -p skate-game --bin skate3rust -- --net-server 127.0.0.1:31030
 --multi-instance --gpu-backend vulkan`.
 
+### Slash commands
+
+When the server installs the `dev` resource (the default `-resources resources`
+loads `resources/dev`), two test commands are available in the chat box:
+
+| Command | Effect |
+|---|---|
+| `/coords [player]` | The server replies with the last known position of a player; the result is shown as a `server:` line in the chat scrollback. |
+| `/tp <x> <y> <z>` | The server validates the destination and emits `dev:teleport`; this client applies it by travelling the local skater to that position. |
+
+The client folds server `command:result` events into the chat scrollback (author
+`server`), so any slash command's outcome is visible in-game. It also consumes
+`dev:teleport` and teleports the local skater — the server never moves a client
+on its own; it only asks.
+
 Implementation notes are in [`docs/`](docs/). Patched Bevy dependencies and
 their licenses are in [`vendor/`](vendor/). This is an unofficial project,
 not affiliated with EA.

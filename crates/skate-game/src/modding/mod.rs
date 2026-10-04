@@ -17,7 +17,7 @@ mod vehicle_camera;
 pub(crate) use participation::{peer_suspended, player_suspended};
 mod capture;
 pub(crate) mod player_physics;
-mod session;
+pub(crate) mod session;
 mod volumes;
 
 pub(crate) use menu::ModMenu;

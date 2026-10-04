@@ -222,6 +222,9 @@ pub(crate) struct Multiplayer {
     chat_log: VecDeque<ChatLine>,
     /// Highest chat seq seen per author, for ordering and duplicate rejection.
     last_chat_seq: BTreeMap<u64, u32>,
+    /// A `dev:teleport` destination requested by the server via a slash command,
+    /// consumed by `apply_dev_commands` which owns the skater runtime.
+    pending_teleport: Option<[f32; 3]>,
 }
 impl Multiplayer {
     pub(crate) fn diagnostic_summary(&self) -> String {
@@ -351,6 +354,9 @@ impl Multiplayer {
     }
     /// Display name for an actor, falling back to the local or generic name.
     pub(crate) fn chat_sender_name(&self, actor: u64) -> String {
+        if actor == SERVER_CHAT_ACTOR {
+            return "server".into();
+        }
         if actor == self.local_actor() {
             return self.published_name();
         }
@@ -645,6 +651,7 @@ impl Plugin for MultiplayerPlugin {
             names: BTreeMap::new(),
             chat_log: VecDeque::new(),
             last_chat_seq: BTreeMap::new(),
+            pending_teleport: None,
         };
         if let Some(server) = config.multiplayer.server {
             // The authoritative session server replaces any local or Steam path.
@@ -684,6 +691,10 @@ impl Plugin for MultiplayerPlugin {
             .add_systems(Startup, (hud::setup, chat::setup))
             .add_systems(Update, (hud::draw, chat::draw))
             .add_systems(Update, send_pose)
+            .add_systems(
+                FixedUpdate,
+                apply_dev_commands.before(SimulationSet::Physics),
+            )
             .add_systems(
                 Update,
                 nametags::draw
@@ -1043,20 +1054,29 @@ fn receive_from_server(net: &mut Multiplayer, now: u64) {
         }
     }
 
-    // Resource events are the extensible script/mod plane. Surface the ones the
-    // game does not already consume on the log channel until the scripting
-    // bridge subscribes to `Polled::events`. Chat is handled above.
+    // Resource events are the extensible script/mod plane. Chat is handled
+    // above; the two events the server produces for slash commands are folded
+    // into the local view here:
+    //   - `command:result` (resource "command") is rendered in the chat
+    //     scrollback so a player sees the outcome of /coords, /tp, /help, …;
+    //   - `dev:teleport` (resource "dev") requests a teleport, staged in
+    //     `pending_teleport` and applied by `apply_dev_commands`, which is the
+    //     only system holding the skater runtime.
     for event in &polled.events {
-        if event.resource == "chat" {
-            continue;
+        match (event.resource.as_str(), event.name.as_str()) {
+            ("chat", _) => {}
+            ("command", "result") => fold_command_result(net, &event.payload),
+            ("dev", "teleport") => fold_dev_teleport(net, &event.payload),
+            _ => {
+                info!(
+                    "NETWORK_EVENT actor={} resource={} name={} bytes={}",
+                    event.actor,
+                    event.resource,
+                    event.name,
+                    event.payload.len()
+                );
+            }
         }
-        info!(
-            "NETWORK_EVENT actor={} resource={} name={} bytes={}",
-            event.actor,
-            event.resource,
-            event.name,
-            event.payload.len()
-        );
     }
 
     // Drop remotes no longer in the roster, and stall out silent ones.
@@ -1111,6 +1131,176 @@ fn receive_from_server(net: &mut Multiplayer, now: u64) {
         );
         info!("MULTIPLAYER_STATS server_peers={peer_count} {}", net.rates);
         net.last_metrics = Instant::now();
+    }
+}
+
+/// Sentinel chat author for server-generated lines (command results). It is not
+/// a real actor id, so it never collides with a player.
+const SERVER_CHAT_ACTOR: u64 = 0;
+
+/// Folds a `command:result` payload into the local scrollback so the player sees
+/// the outcome of a slash command. The payload is the JSON the server emits:
+/// `{"command","ok","message","usage","result"}`.
+fn fold_command_result(net: &mut Multiplayer, payload: &[u8]) {
+    let value: serde_json::Value = match serde_json::from_slice(payload) {
+        Ok(v) => v,
+        Err(_) => {
+            info!(
+                "command result: undecodable payload ({} bytes)",
+                payload.len()
+            );
+            return;
+        }
+    };
+
+    push_server_chat(net, format_command_result(&value));
+}
+
+/// Renders a decoded `command:result` payload as one chat line.
+fn format_command_result(value: &serde_json::Value) -> String {
+    let command = value.get("command").and_then(|v| v.as_str()).unwrap_or("");
+    let ok = value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let mut text = if command.is_empty() {
+        "/?".to_string()
+    } else {
+        format!("/{command}")
+    };
+    if !ok {
+        let message = value
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("command failed");
+        text.push_str(": ");
+        text.push_str(message);
+        if let Some(usage) = value.get("usage").and_then(|v| v.as_str()) {
+            if !usage.is_empty() {
+                text.push_str(" — usage: ");
+                text.push_str(usage);
+            }
+        }
+    } else if let Some(result) = value.get("result") {
+        let rendered = render_command_result(result);
+        if !rendered.is_empty() {
+            text.push_str(": ");
+            text.push_str(&rendered);
+        }
+    } else {
+        text.push_str(": ok");
+    }
+
+    // The dev commands return a human-readable `text`; prefer it verbatim.
+    if let Some(summary) = value
+        .get("result")
+        .and_then(|r| r.get("text"))
+        .and_then(|v| v.as_str())
+    {
+        text = summary.to_string();
+    }
+    text
+}
+
+/// Renders a command result object as one line: `key=value` pairs, or a compact
+/// JSON dump when it is not a flat object.
+fn render_command_result(result: &serde_json::Value) -> String {
+    match result {
+        serde_json::Value::Object(map) => {
+            let mut parts = Vec::with_capacity(map.len());
+            for (key, value) in map {
+                // Skip the pre-rendered summary; it is already the line.
+                if key == "text" {
+                    continue;
+                }
+                parts.push(format!("{key}={}", render_scalar(value)));
+            }
+            parts.join(" ")
+        }
+        other => render_scalar(other),
+    }
+}
+
+fn render_scalar(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => "null".into(),
+        other => other.to_string(),
+    }
+}
+
+/// Largest coordinate magnitude a teleport may carry. Matches
+/// `skate_mods::TeleportOptions::validate` and the server's dev resource, so a
+/// malformed or hostile payload cannot place the skater outside the supported
+/// world.
+const TELEPORT_COORD_LIMIT: f32 = 100_000.;
+/// Largest `dev:teleport` payload accepted before parsing. The legit payload is
+/// a few dozen bytes; anything larger is rejected without allocating a tree.
+const TELEPORT_PAYLOAD_MAX: usize = 256;
+
+/// Parses a `dev:teleport` payload `{"x","y","z"}` into a validated destination.
+/// Returns `Err` with a human-readable reason when the payload is malformed,
+/// out of range, or too large.
+fn parse_dev_teleport(payload: &[u8]) -> Result<[f32; 3], &'static str> {
+    if payload.len() > TELEPORT_PAYLOAD_MAX {
+        return Err("dev:teleport: payload too large");
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|_| "dev:teleport: malformed destination")?;
+    let coord = |key: &str| value.get(key).and_then(|v| v.as_f64()).map(|v| v as f32);
+    let (Some(x), Some(y), Some(z)) = (coord("x"), coord("y"), coord("z")) else {
+        return Err("dev:teleport: malformed destination");
+    };
+    if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+        return Err("dev:teleport: non-finite destination");
+    }
+    if x.abs() > TELEPORT_COORD_LIMIT
+        || y.abs() > TELEPORT_COORD_LIMIT
+        || z.abs() > TELEPORT_COORD_LIMIT
+    {
+        return Err("dev:teleport: destination out of range");
+    }
+    Ok([x, y, z])
+}
+
+/// Folds a `dev:teleport` payload into a pending teleport.
+fn fold_dev_teleport(net: &mut Multiplayer, payload: &[u8]) {
+    match parse_dev_teleport(payload) {
+        Ok(position) => net.pending_teleport = Some(position),
+        Err(reason) => push_server_chat(net, reason.into()),
+    }
+}
+
+/// Appends a server-authored line to the bounded local scrollback.
+fn push_server_chat(net: &mut Multiplayer, text: String) {
+    info!("COMMAND_RESULT {text:?}");
+    net.chat_log.push_back(ChatLine {
+        actor: SERVER_CHAT_ACTOR,
+        text,
+    });
+    while net.chat_log.len() > CHAT_LOG_MAX {
+        net.chat_log.pop_front();
+    }
+}
+
+/// Applies a teleport requested by a server slash command. This is the only
+/// system that owns both the pending request and the skater runtime; `receive`
+/// cannot touch the world. Runs after the map is ready and before physics so
+/// the teleport lands on the next simulate step.
+pub(crate) fn apply_dev_commands(mut net: ResMut<Multiplayer>, mut skater: ResMut<SkaterRuntime>) {
+    let Some(position) = net.pending_teleport.take() else {
+        return;
+    };
+    let transform = crate::modding::session::spawn_matrix(position, None);
+    match skater.travel(transform, None) {
+        Ok(()) => push_server_chat(
+            &mut net,
+            format!(
+                "teleported to x={:.2} y={:.2} z={:.2}",
+                position[0], position[1], position[2]
+            ),
+        ),
+        Err(error) => push_server_chat(&mut net, format!("teleport failed: {error}")),
     }
 }
 pub(crate) fn prepare(
@@ -1381,5 +1571,84 @@ mod chat_tests {
         assert_eq!(sanitize_chat("\u{1}\u{2}"), "");
         let long: String = "x".repeat(CHAT_MAX_CHARS + 40);
         assert_eq!(sanitize_chat(&long).chars().count(), CHAT_MAX_CHARS);
+    }
+
+    #[test]
+    fn command_result_success_prefers_text_summary() {
+        let value = serde_json::json!({
+            "command": "coords",
+            "ok": true,
+            "result": { "actor": 7, "x": 1.5, "y": -2.0, "z": 30.0, "text": "Rider (7): x=1.50 y=-2.00 z=30.00" }
+        });
+        assert_eq!(
+            format_command_result(&value),
+            "Rider (7): x=1.50 y=-2.00 z=30.00"
+        );
+    }
+
+    #[test]
+    fn command_result_success_without_text_renders_pairs() {
+        let value = serde_json::json!({
+            "command": "tp",
+            "ok": true,
+            "result": { "teleport": { "x": 1.0, "y": 2.0, "z": 3.0 } }
+        });
+        let line = format_command_result(&value);
+        assert!(line.starts_with("/tp: "), "unexpected line: {line}");
+        assert!(line.contains("teleport="));
+    }
+
+    #[test]
+    fn command_result_failure_includes_message_and_usage() {
+        let value = serde_json::json!({
+            "command": "tp",
+            "ok": false,
+            "message": "usage: /tp <x> <y> <z>",
+            "usage": "/tp <x> <y> <z>"
+        });
+        let line = format_command_result(&value);
+        assert!(
+            line.contains("usage: /tp <x> <y> <z>"),
+            "unexpected line: {line}"
+        );
+        assert!(
+            line.contains("/tp <x> <y> <z>"),
+            "usage hint missing: {line}"
+        );
+    }
+
+    #[test]
+    fn command_result_empty_command_is_reported() {
+        let value = serde_json::json!({ "ok": false, "message": "unknown command" });
+        assert!(format_command_result(&value).starts_with("/?: "));
+    }
+
+    #[test]
+    fn dev_teleport_accepts_in_range_destination() {
+        let position = parse_dev_teleport(br#"{"x":1.5,"y":-2,"z":30}"#).unwrap();
+        assert_eq!(position, [1.5, -2.0, 30.0]);
+    }
+
+    #[test]
+    fn dev_teleport_rejects_malformed_payloads() {
+        assert!(parse_dev_teleport(b"not json").is_err());
+        assert!(parse_dev_teleport(br#"{"x":1,"y":2}"#).is_err());
+        assert!(parse_dev_teleport(br#"{"x":"a","y":2,"z":3}"#).is_err());
+    }
+
+    #[test]
+    fn dev_teleport_rejects_out_of_range_and_non_finite() {
+        assert!(parse_dev_teleport(br#"{"x":100001,"y":0,"z":0}"#).is_err());
+        assert!(parse_dev_teleport(br#"{"x":0,"y":-200000,"z":0}"#).is_err());
+        // A JSON string "NaN" does not parse as a number at all.
+        assert!(parse_dev_teleport(br#"{"x":"NaN","y":0,"z":0}"#).is_err());
+    }
+
+    #[test]
+    fn dev_teleport_rejects_oversized_payload() {
+        let mut payload = String::from(r#"{"x":1,"y":2,"z":3,"pad":""#);
+        payload.push_str(&"a".repeat(TELEPORT_PAYLOAD_MAX));
+        payload.push_str(r#""}"#);
+        assert!(parse_dev_teleport(payload.as_bytes()).is_err());
     }
 }
