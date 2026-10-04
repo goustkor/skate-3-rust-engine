@@ -1,8 +1,8 @@
 //! One production tick: controller graphs, physical input/state, shared solve,
 //! physical animation output and the normal gameplay camera.
 use super::{
-    GamePhysics, PlayerControls, SkaterRuntime, animation_phase, camera_output, ground_phase,
-    input_phase, player_state, solve,
+    animation_phase, camera_output, ground_phase, input_phase, player_state, solve, GamePhysics,
+    PlayerControls, SkaterRuntime,
 };
 use crate::{camera::CameraRuntime, graph_runtime::StockGraphs};
 use skate_core::{
@@ -33,9 +33,13 @@ pub(super) fn advance(
     //SimController8285C968 dispatches the preceding tick's camera messages
     //before simulation. Keep End/Begin ordering when both occur in one update.
     for request in camera.simulation_rate_requests.drain(..) {
-        if !physics.network_active { physics.clock.apply(request)?; }
+        if !physics.network_active {
+            physics.clock.apply(request)?;
+        }
     }
-    if physics.network_active { physics.clock = super::clock::SimulationClock::default(); }
+    if physics.network_active {
+        physics.clock = super::clock::SimulationClock::default();
+    }
     if physics.ticks == 0 {
         player_state::initialize(physics, skater)?;
         //Ctor82DB3008 enters Ground without ProcessOutput. Keep the constructed
@@ -43,7 +47,9 @@ pub(super) fn advance(
         //Publishing Ground here runs its ForcePhysics Begin before the initial
         //input reset82DB8998, which would immediately clear that mode again.
     }
-    if super::climbing::advance(physics, skater, controls, camera)? { return Ok(()); }
+    if super::climbing::advance(physics, skater, controls, camera)? {
+        return Ok(());
+    }
     //8285A06C/A080 completes prior trajectory batches, then A0D0 calls
     //Player slot16=82DB3C78 (vtable82328688). Consume with retained input
     //BEFORE this frame's queries, ProcessInput, and state selection.
@@ -55,14 +61,17 @@ pub(super) fn advance(
         .riding
         .start_wheel_queries(&physics.board, &physics.world)?;
     let skeleton_queries = super::foot_ik_queries::query(&physics.world, &skater.skeleton)?;
-    let animation = bevy::log::info_span!("fixed_animation_graphs").in_scope(|| animation_phase::advance(
-        physics,
-        skater,
-        controls,
-        graphs,
-        &physics.animation_profile,
-    ))
-    .map_err(|e| format!("Animation tick{}: {e}", physics.ticks))?;
+    let animation = bevy::log::info_span!("fixed_animation_graphs")
+        .in_scope(|| {
+            animation_phase::advance(
+                physics,
+                skater,
+                controls,
+                graphs,
+                &physics.animation_profile,
+            )
+        })
+        .map_err(|e| format!("Animation tick{}: {e}", physics.ticks))?;
     super::offboard_audit_trace::stage(tick, "animation", physics, skater, controls);
     #[cfg(debug_assertions)]
     super::dev_trace::checkpoint("animation", physics, skater);
@@ -85,7 +94,10 @@ pub(super) fn advance(
     )?;
     #[cfg(debug_assertions)]
     super::dev_trace::checkpoint("processed_input", physics, skater);
-    skater.ground_settings = skater.ground_profiles.select(skater.player_input.processed.state_variant_index_2528, skater.player_input.processed.surface_mode_2540)?;
+    skater.ground_settings = skater.ground_profiles.select(
+        skater.player_input.processed.state_variant_index_2528,
+        skater.player_input.processed.surface_mode_2540,
+    )?;
     if teleported {
         skater.respawn.reset_measurements();
         #[cfg(test)]
@@ -129,7 +141,8 @@ pub(super) fn advance(
     if state_before_selection != state_after_selection {
         if skater.player_input.processed.flags_2476 & (1 << 22) != 0
             || state_before_selection == skate_core::player::state::PhysicalStateId::HandPlant
-            || state_after_selection == skate_core::player::state::PhysicalStateId::HandPlant {
+            || state_after_selection == skate_core::player::state::PhysicalStateId::HandPlant
+        {
             bevy::log::info!("HANDPLANT_STATE tick={tick} from={state_before_selection:?} to={state_after_selection:?} flags={:08x} phase={} processed={:08x}/{:08x}/{:08x}",
                 skater.handplant.flags, skater.handplant.phase,
                 skater.player_input.processed.flags_2468, skater.player_input.processed.flags_2476,
@@ -145,10 +158,18 @@ pub(super) fn advance(
     }
     player_state::pre_state(physics, skater)?;
     match skater.player_state.current() {
-        skate_core::player::state::PhysicalStateId::RevertGround => super::revert_state::update(physics,skater)?,
-        skate_core::player::state::PhysicalStateId::HandPlant => super::handplant::update(physics,skater)?,
-        skate_core::player::state::PhysicalStateId::FootPlant => super::footplant::ground::update(physics, skater)?,
-        skate_core::player::state::PhysicalStateId::Boneless => super::boneless::update(physics, skater)?,
+        skate_core::player::state::PhysicalStateId::RevertGround => {
+            super::revert_state::update(physics, skater)?
+        }
+        skate_core::player::state::PhysicalStateId::HandPlant => {
+            super::handplant::update(physics, skater)?
+        }
+        skate_core::player::state::PhysicalStateId::FootPlant => {
+            super::footplant::ground::update(physics, skater)?
+        }
+        skate_core::player::state::PhysicalStateId::Boneless => {
+            super::boneless::update(physics, skater)?
+        }
         skate_core::player::state::PhysicalStateId::PhysicsGround => {
             let p = &skater.player_input.processed;
             let com = p.animation_com_to_deck_752.map(f32::from_bits);
@@ -169,7 +190,7 @@ pub(super) fn advance(
             //after Reckoning; this frame's propulsion may then set it again.
             skater.ground.state.push_suppressed_2730 = false;
             ground_phase::advance(physics, skater)?;
-            super::handplant::ground_update(physics,skater)?;
+            super::handplant::ground_update(physics, skater)?;
             input_phase::update_ground(physics, skater)?;
         }
         skate_core::player::state::PhysicalStateId::PhysicsAirSecondary => {
@@ -243,7 +264,8 @@ pub(super) fn advance(
     //World8275ECA4 ends skeleton tests after state/forces and before solving.
     //Teleport resets previous observations, but preserves this pending batch.
     skeleton_queries.publish(&mut skater.player_input.player);
-    bevy::log::info_span!("fixed_collision_and_solve").in_scope(|| solve::advance(physics, skater, skater.ground.steering.targets))?;
+    bevy::log::info_span!("fixed_collision_and_solve")
+        .in_scope(|| solve::advance(physics, skater, skater.ground.steering.targets))?;
     super::offboard_audit_trace::stage(tick, "solve", physics, skater, controls);
     #[cfg(debug_assertions)]
     super::dev_trace::checkpoint("solve", physics, skater);
@@ -318,6 +340,11 @@ pub(super) fn advance(
             .any(|event| matches!(event, PhysicsEvent::Landing)),
         events,
     });
+    // Mouse look is a dedicated camera channel: hand it to the frame after the
+    // animation graph (which publishes the stock right-stick OB_LookAt) so the
+    // mouse, not the trick stick, drives the camera.
+    skater.animation_input.extra.look_x = controls.camera_look[0];
+    skater.animation_input.extra.look_y = controls.camera_look[1];
     camera_output::advance(physics, skater, &feedback, camera)?;
     let score = &skater.animation.motion.score_packet;
     let deck_frame = physics.board.part_transforms()[BodyId::Deck.index()];
@@ -327,24 +354,33 @@ pub(super) fn advance(
     let velocity = skater.centre_of_mass_output.velocity;
     let filtered = skater.player_state.filtered_output;
     skater.scoring.advance(crate::scoring_runtime::Frame {
-        tick: tick as u32, dt: simulation.time_step,
-        category: filtered.map_or(Default::default(), |f|f.category),
+        tick: tick as u32,
+        dt: simulation.time_step,
+        category: filtered.map_or(Default::default(), |f| f.category),
         state: skater.player_state.current() as u32,
-        descriptor: score.trick_names.first.or_else(||score.grab.map(|g|g.0)),
-        grind_id: filtered.map_or(-1, |f|f.grind.scorable_id), flags:score.flags,
-        position:[position.x,position.y,position.z], velocity:[velocity[0],velocity[1],velocity[2]],
-        forward:deck_frame.basis.columns[2],
-        switch:skater.animation.packet.riding_switch,fakie:skater.animation.packet.riding_fakie,
-        regular:skater.animation.packet.regular_stance,
-        player_basis:std::array::from_fn(|i|std::array::from_fn(|j|skater.animated_skeleton.roots.animation_to_world[i][j])),
-        board_basis:deck_frame.basis.columns,
-        reckoning_up:std::array::from_fn(|i|f32::from_bits(skater.player_input.physical.reckoning.vector_96[i])),
-        body_flip:skater.player_input.physical.air.flag_441!=0,
-        front_flip:skater.player_input.physical.air.flag_445!=0,
-        suspend_air:skater.player_input.physical.air.use_air_reckoning_452!=0,
-        landing:skater.landing_quality,teleported,
+        descriptor: score.trick_names.first.or_else(|| score.grab.map(|g| g.0)),
+        grind_id: filtered.map_or(-1, |f| f.grind.scorable_id),
+        flags: score.flags,
+        position: [position.x, position.y, position.z],
+        velocity: [velocity[0], velocity[1], velocity[2]],
+        forward: deck_frame.basis.columns[2],
+        switch: skater.animation.packet.riding_switch,
+        fakie: skater.animation.packet.riding_fakie,
+        regular: skater.animation.packet.regular_stance,
+        player_basis: std::array::from_fn(|i| {
+            std::array::from_fn(|j| skater.animated_skeleton.roots.animation_to_world[i][j])
+        }),
+        board_basis: deck_frame.basis.columns,
+        reckoning_up: std::array::from_fn(|i| {
+            f32::from_bits(skater.player_input.physical.reckoning.vector_96[i])
+        }),
+        body_flip: skater.player_input.physical.air.flag_441 != 0,
+        front_flip: skater.player_input.physical.air.flag_445 != 0,
+        suspend_air: skater.player_input.physical.air.use_air_reckoning_452 != 0,
+        landing: skater.landing_quality,
+        teleported,
         // Revert Fill publishes its active lifetime in State66. State70 is unset.
-        reverting:skater.player_input.physical.state.flag_66 != 0,
+        reverting: skater.player_input.physical.state.flag_66 != 0,
     })?;
     super::climbing::approach::advance(physics, skater, controls);
     skater.animation_input.finish_output_publication();

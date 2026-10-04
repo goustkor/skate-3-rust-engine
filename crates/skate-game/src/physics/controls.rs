@@ -1,5 +1,5 @@
 //! Controller-derived state is evaluated on the same fixed gameplay tick.
-use super::{GamePhysics, skater::SkaterRuntime};
+use super::{skater::SkaterRuntime, GamePhysics};
 use crate::input::PublishedTickInput;
 use bevy::prelude::*;
 use skate_core::graph::intents::IntentMap;
@@ -26,6 +26,8 @@ pub(crate) struct PlayerControls {
     //One tick's native PlayerUI82898D20 result, shared by animation and PhysIn.
     //None means the native offboard remap gate did not run, not missing camera.
     offboard_axes: Option<[f32; 2]>,
+    /// Mouse-driven camera look for this tick, handed to the camera frame.
+    pub(crate) camera_look: [f32; 2],
     gestures: Option<crate::input::gesture_input::GestureInput>,
 }
 impl Default for PlayerControls {
@@ -44,6 +46,7 @@ impl Default for PlayerControls {
             bumper_state_104: false,
             preferences: PushPreferences::default(),
             offboard_axes: None,
+            camera_look: [0.0; 2],
             gestures: None,
         }
     }
@@ -54,12 +57,15 @@ pub(super) fn sample(
     physics: Res<GamePhysics>,
     skater: Res<SkaterRuntime>,
     camera: Res<crate::camera::CameraRuntime>,
+    mouse: Res<crate::input::keyboard::MouseStick>,
     mut player: ResMut<PlayerControls>,
 ) {
     let mut map = input.0.actions();
     player
         .update_for_physics(&mut map, &physics, &skater, &camera)
         .unwrap_or_else(|error| panic!("Offboard controller publication: {error}"));
+    // Mouse look is the dedicated camera channel, independent of the actions.
+    player.camera_look = mouse.right;
     player.publish_gestures(
         physics.animation_profile.physics_mode,
         skater.player_input.physical.state.state_16,
@@ -168,20 +174,23 @@ impl PlayerControls {
                 &self.controller,
                 self.actor_flags,
             ));
-        self.intents.extend(skate_core::input::gameplay_gestures::produce(&self.controller));
-        self.intents.extend(wipeout_intentions::produce(
-            &self.controller,
-            self.actor_flags,
-            physical_capabilities,
-        ).into_iter().map(|mut intent| {
-            // PC bail steering convention: reverse horizontal control at the
-            // intent boundary, before both the graph and SDK publication.
-            // The recovered Skate 3 producer/torque kernels retain their signs.
-            if intent.name == "WipeoutControlX" {
-                intent.value = -intent.value;
-            }
-            intent
-        }));
+        self.intents
+            .extend(skate_core::input::gameplay_gestures::produce(
+                &self.controller,
+            ));
+        self.intents.extend(
+            wipeout_intentions::produce(&self.controller, self.actor_flags, physical_capabilities)
+                .into_iter()
+                .map(|mut intent| {
+                    // PC bail steering convention: reverse horizontal control at the
+                    // intent boundary, before both the graph and SDK publication.
+                    // The recovered Skate 3 producer/torque kernels retain their signs.
+                    if intent.name == "WipeoutControlX" {
+                        intent.value = -intent.value;
+                    }
+                    intent
+                }),
+        );
         self.intents
             .extend(skate_core::input::anticipation_intentions::produce(
                 &self.controller,

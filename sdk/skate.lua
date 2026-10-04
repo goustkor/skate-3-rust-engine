@@ -321,6 +321,12 @@ function sdk.input.down(key) end
 function sdk.input.action(id) end
 ---@return PadSnapshot
 function sdk.input.pad() end
+---Capture (true) or release (false) the mouse and/or keyboard for gameplay.
+---A nil field is left unchanged. A released device stops driving the skater
+---while its events stay readable (use sdk.input.down for keys).
+---@param mouse? boolean
+---@param keyboard? boolean
+function sdk.input.capture(mouse, keyboard) end
 ---@param key string
 ---@param text string
 function sdk.ui.text(key, text) end

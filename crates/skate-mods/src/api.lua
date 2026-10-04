@@ -353,6 +353,14 @@ end
 function sdk.input.pad()
     return as_table(sdk.snapshot.pad) or {buttons=0,triggers={0,0},left={0,0},right={0,0}}
 end
+-- Capture (true) or release (false) the mouse and/or keyboard for gameplay.
+-- A nil field is left unchanged; a released device stops driving the skater
+-- while its events stay readable (sdk.input.down for keys).
+function sdk.input.capture(mouse, keyboard)
+    if mouse ~= nil then assert(type(mouse)=='boolean','mouse must be boolean') end
+    if keyboard ~= nil then assert(type(keyboard)=='boolean','keyboard must be boolean') end
+    submit{kind="input_capture",mouse=mouse,keyboard=keyboard}
+end
 
 sdk.assets = {}
 function sdk.assets.objects(path)

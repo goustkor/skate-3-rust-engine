@@ -1,5 +1,5 @@
-use crate::{Command, Manifest, validate_package, vm::Vm};
-use serde_json::{Value, json};
+use crate::{validate_package, vm::Vm, Command, Manifest};
+use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::PathBuf};
 struct Bones {
     vm: Vm,
@@ -107,11 +107,10 @@ fn bones_require_both_closing_speed_and_impulse_not_support_force() {
         "on_event",
         json!({"name":"menu_action","menu":"bones","item":"heal"}),
     );
-    assert!(
-        h.commands
-            .iter()
-            .any(|c| matches!(c, Command::PlayerResetJoint { joint: 3 }))
-    );
+    assert!(h
+        .commands
+        .iter()
+        .any(|c| matches!(c, Command::PlayerResetJoint { joint: 3 })));
 }
 #[test]
 fn bones_wait_for_bail_and_respect_other_mod_joint_ownership() {
@@ -138,28 +137,51 @@ fn bones_failed_override_is_reported_without_claiming_an_injury() {
     h.commands.clear();
     h.snapshot["player_physics"]["contacts"] = json!([]);
     h.step();
-    assert!(
-        !h.commands
-            .iter()
-            .any(|c| matches!(c,Command::NetworkState{value,..} if value["j"]==json!([3])))
-    );
-    assert!(
-        h.commands.iter().any(
-            |c| matches!(c,Command::Overlay{text,..} if text.contains("owned by another mod"))
-        )
-    );
+    assert!(!h
+        .commands
+        .iter()
+        .any(|c| matches!(c,Command::NetworkState{value,..} if value["j"]==json!([3]))));
+    assert!(h
+        .commands
+        .iter()
+        .any(|c| matches!(c,Command::Overlay{text,..} if text.contains("owned by another mod"))));
 }
 #[test]
 fn generalized_commands_reject_invalid_refs_and_nested_requests() {
     for v in [
         json!({"kind":"native_impulse","body":{"kind":"remote","index":0},"impulse":[1,0,0],"angular":false}),
         json!({"kind":"input_override","action":1,"value":0}),
+        json!({"kind":"input_capture"}),
         json!({"kind":"graph_gate","graph":"motion","target":"raw_memory","index":1,"enabled":false}),
         json!({"kind":"request","key":"outer","command":{"kind":"request","key":"inner","command":{"kind":"log","text":"x"}}}),
     ] {
         let c: Command = serde_json::from_value(v).unwrap();
         assert!(!c.validate());
     }
+}
+#[test]
+fn input_capture_accepts_either_device_and_reads_both_fields() {
+    let mouse: Command =
+        serde_json::from_value(json!({"kind":"input_capture","mouse":false})).unwrap();
+    assert!(mouse.validate());
+    assert!(matches!(
+        mouse,
+        Command::InputCapture {
+            mouse: Some(false),
+            keyboard: None
+        }
+    ));
+    let both: Command =
+        serde_json::from_value(json!({"kind":"input_capture","mouse":true,"keyboard":false}))
+            .unwrap();
+    assert!(both.validate());
+    assert!(matches!(
+        both,
+        Command::InputCapture {
+            mouse: Some(true),
+            keyboard: Some(false)
+        }
+    ));
 }
 #[test]
 fn generalized_wrappers_route_typed_bodies_and_ignore_stale_receipts() {
@@ -269,24 +291,18 @@ fn skyline_waits_for_spawn_receipt_and_reports_failure_without_disabling_mod() {
         .expect("spawn request");
     for _ in 0..12 {
         let cmds = call("on_fixed_update", &s);
-        assert!(
-            !cmds
-                .iter()
-                .any(|c| matches!(c,Command::GraphicsMesh{key,..} if key=="skyline_visual"))
-        );
+        assert!(!cmds
+            .iter()
+            .any(|c| matches!(c,Command::GraphicsMesh{key,..} if key=="skyline_visual")));
     }
     s["command_results"] = json!({manifest.id.clone():{"spawn_chassis":{"token":token,"ok":false,"error":"collision model unavailable"}}});
     let cmds = call("on_fixed_update", &s);
-    assert!(
-        cmds.iter().any(
-            |c| matches!(c,Command::Log{text} if text.contains("collision model unavailable"))
-        )
-    );
-    assert!(
-        !cmds
-            .iter()
-            .any(|c| matches!(c,Command::GraphicsMesh{key,..} if key=="skyline_visual"))
-    );
+    assert!(cmds
+        .iter()
+        .any(|c| matches!(c,Command::Log{text} if text.contains("collision model unavailable"))));
+    assert!(!cmds
+        .iter()
+        .any(|c| matches!(c,Command::GraphicsMesh{key,..} if key=="skyline_visual")));
     // Retry must ignore the old failure receipt, and bind graphics only after success.
     s["keys"]["F10"] = json!(true);
     call("on_fixed_update", &s);
@@ -308,9 +324,8 @@ fn skyline_waits_for_spawn_receipt_and_reports_failure_without_disabling_mod() {
     s["physics"]["bodies"]["chassis"] = json!({"position":[0.,1.,4.5],"rotation":[0.,0.,0.,1.],"linvel":[0.,0.,0.],"angvel":[0.,0.,0.]});
     let cmds = call("on_fixed_update", &s);
     assert!(cmds.iter().all(Command::validate));
-    assert!(
-        cmds.iter()
-            .any(|c| matches!(c,Command::GraphicsMesh{key,..} if key=="skyline_visual"))
-    );
+    assert!(cmds
+        .iter()
+        .any(|c| matches!(c,Command::GraphicsMesh{key,..} if key=="skyline_visual")));
     call("on_unload", &s);
 }

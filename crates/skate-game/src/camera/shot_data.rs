@@ -91,7 +91,9 @@ impl StockShots {
                 snap_to_reference_point: boolean("OptionSnapToReferencePoint")?,
                 use_previous_shot: boolean("OptionUsePreviousShot")?,
                 use_drop_predictor: boolean("OptionUseDropPredictor")?,
-                use_free_camera_stick: boolean("OptionUseFreeCamStick")?,
+                // Host policy: the normal shot always consumes the camera look
+                // channel now that the mouse, not the trick stick, drives it.
+                use_free_camera_stick: 1,
                 // The sole dynamic attribute has the native missing-value zero.
                 // All layout fields above are required in the converted data.
                 avoidance_override: if has_field(data, key, "OptionAvoidanceOverride")? {

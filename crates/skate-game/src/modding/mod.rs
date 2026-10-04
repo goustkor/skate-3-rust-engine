@@ -1,39 +1,37 @@
 //! Main-thread SDK adapter. Lua never receives World, entity IDs, or asset handles.
+pub(crate) mod attachment;
 mod audio;
-mod canvas;
-mod graphics_dynamic;
-mod vehicle_camera;
 pub(crate) mod bridge;
-pub(crate) mod replication;
+mod camera_stream;
+mod canvas;
+mod engine_access;
+mod glb;
 mod graphics;
 mod graphics_deformation;
-pub(crate) mod attachment;
-mod glb;
+mod graphics_dynamic;
 mod menu;
 mod observation;
-mod engine_access;
 mod participation;
-mod camera_stream;
-pub(crate) use participation::{player_suspended, peer_suspended};
-mod session;
-mod volumes;
+pub(crate) mod replication;
+mod vehicle_camera;
+pub(crate) use participation::{peer_suspended, player_suspended};
 mod capture;
 pub(crate) mod player_physics;
+mod session;
+mod volumes;
 
 pub(crate) use menu::ModMenu;
 
 use bevy::{
-    asset::io::{AssetSourceBuilder, file::FileAssetReader},
+    asset::io::{file::FileAssetReader, AssetSourceBuilder},
     prelude::*,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use skate_dynamics::{
-    BodyDesc, ContactEvent, DynamicsWorld, GROUND_BODY_ID, RevoluteJointDesc, Shape,
+    BodyDesc, ContactEvent, DynamicsWorld, RevoluteJointDesc, Shape, GROUND_BODY_ID,
 };
-use skate_mods::{
-    with_host, Command, DynamicsHost, Manager, RaycastFilter, RaycastOptions,
-};
+use skate_mods::{with_host, Command, DynamicsHost, Manager, RaycastFilter, RaycastOptions};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Resource)]
@@ -48,7 +46,7 @@ pub(crate) struct Mods {
     canvases: BTreeMap<(String, String), canvas::Canvas>,
     attach: Option<AttachState>,
     detach_error: Option<String>,
-    detach_pending: Option<(Transform,std::time::Instant)>,
+    detach_pending: Option<(Transform, std::time::Instant)>,
     camera: CameraOverride,
     suspended_by: BTreeSet<String>,
     hidden_players: BTreeMap<Entity, Visibility>,
@@ -74,14 +72,14 @@ pub(crate) struct Mods {
     multiplayer_debug: BTreeMap<(String, String), String>,
     /// Contacts from the last DynamicsWorld::step (before drain).
     last_contacts: Vec<ContactEvent>,
-    command_results: BTreeMap<(String,String), Value>,
-    graph_gates: BTreeMap<(String,String,usize),(String,bool)>,
-    input_overrides: BTreeMap<usize,(String,f32)>,
+    command_results: BTreeMap<(String, String), Value>,
+    graph_gates: BTreeMap<(String, String, usize), (String, bool)>,
+    input_overrides: BTreeMap<usize, (String, f32)>,
     session: session::Runtime,
     skater_remote: BTreeMap<u64, observation::WireObs>,
     pending_remote_teleport: Option<skate_mods::TeleportOptions>,
     volumes: BTreeMap<(String, String), volumes::Volume>,
-    pub(crate) custom_menus: BTreeMap<(String,String), skate_mods::extensions::MenuOptions>,
+    pub(crate) custom_menus: BTreeMap<(String, String), skate_mods::extensions::MenuOptions>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -95,7 +93,6 @@ struct NetWire {
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct ModCameraSet;
-
 
 type GraphicsOwned = graphics::Owned;
 
@@ -122,7 +119,10 @@ impl CameraOverride {
     fn clear(&mut self) {
         // Restore the camera lens on the next presentation frame, even on unload.
         let saved_near = self.saved_near.take();
-        *self = Self { saved_near, ..Default::default() };
+        *self = Self {
+            saved_near,
+            ..Default::default()
+        };
     }
     fn claim(&mut self, owner: &str) -> Result<(), String> {
         if self.owner.as_deref().is_some_and(|o| o != owner) {
@@ -132,9 +132,9 @@ impl CameraOverride {
         Ok(())
     }
     fn follows(&self, owner: &str, body: &str) -> bool {
-        self.owner.as_deref() == Some(owner) &&
-            (self.rig.as_ref().is_some_and(|r| r.body == body) ||
-             self.follow.as_ref().is_some_and(|(_, b, _)| b == body))
+        self.owner.as_deref() == Some(owner)
+            && (self.rig.as_ref().is_some_and(|r| r.body == body)
+                || self.follow.as_ref().is_some_and(|(_, b, _)| b == body))
     }
 }
 
@@ -185,7 +185,8 @@ impl Plugin for ModdingPlugin {
             multiplayer_debug: BTreeMap::new(),
             last_contacts: Vec::new(),
             graph_gates: BTreeMap::new(),
-            command_results: BTreeMap::new(), input_overrides: BTreeMap::new(),
+            command_results: BTreeMap::new(),
+            input_overrides: BTreeMap::new(),
             session: session::Runtime::default(),
             skater_remote: BTreeMap::new(),
             pending_remote_teleport: None,
@@ -206,7 +207,8 @@ impl Plugin for ModdingPlugin {
         )
         .add_systems(
             FixedUpdate,
-            (replication::sample_fixed, bridge::dynamics_to_board).chain()
+            (replication::sample_fixed, bridge::dynamics_to_board)
+                .chain()
                 .after(crate::app::SimulationSet::Controls)
                 .after(crate::multiplayer::prepare)
                 .before(crate::app::SimulationSet::Physics)
@@ -222,9 +224,13 @@ impl Plugin for ModdingPlugin {
             Update,
             (
                 update.after(crate::app::FrameSet::Animation),
-                bridge::sync_network.after(crate::multiplayer::send_pose).after(update),
+                bridge::sync_network
+                    .after(crate::multiplayer::send_pose)
+                    .after(update),
                 sync_net.after(bridge::sync_network).after(ModCameraSet),
-                participation::present.after(update).after(crate::app::FrameSet::Animation),
+                participation::present
+                    .after(update)
+                    .after(crate::app::FrameSet::Animation),
                 graphics::debug.after(bridge::sync_network).after(update),
                 present_camera
                     .in_set(ModCameraSet)
@@ -277,7 +283,14 @@ impl Mods {
     }
 }
 
-fn body_snapshot_for(mods: &Mods, owner: &str, player_shapes: &[(skate_dynamics::rapier3d::prelude::SharedShape, skate_dynamics::rapier3d::prelude::Pose)]) -> serde_json::Value {
+fn body_snapshot_for(
+    mods: &Mods,
+    owner: &str,
+    player_shapes: &[(
+        skate_dynamics::rapier3d::prelude::SharedShape,
+        skate_dynamics::rapier3d::prelude::Pose,
+    )],
+) -> serde_json::Value {
     let mut bodies = serde_json::Map::new();
     let mut reverse = BTreeMap::<u64, String>::new();
     for ((o, key), id) in &mods.bodies {
@@ -459,15 +472,33 @@ fn snapshot_ro(world: &World, mods: &mut Mods, camera: Option<[f32; 3]>) -> serd
     // its serialization until either native resource changes, while inputs,
     // command receipts, camera and network observations remain frame-current.
     let key = [
-        world.get_resource_ref::<crate::physics::GamePhysics>().unwrap().last_changed().get() as u64,
-        world.get_resource_ref::<crate::physics::SkaterRuntime>().unwrap().last_changed().get() as u64,
+        world
+            .get_resource_ref::<crate::physics::GamePhysics>()
+            .unwrap()
+            .last_changed()
+            .get() as u64,
+        world
+            .get_resource_ref::<crate::physics::SkaterRuntime>()
+            .unwrap()
+            .last_changed()
+            .get() as u64,
         mods.bodies.len() as u64,
         mods.generation,
     ];
-    if mods.native_snapshot.as_ref().is_none_or(|(previous, _)| *previous != key) {
+    if mods
+        .native_snapshot
+        .as_ref()
+        .is_none_or(|(previous, _)| *previous != key)
+    {
         let fields = BTreeMap::from([
-            ("player_physics".into(), std::sync::Arc::new(player_physics::snapshot(world, mods))),
-            ("engine".into(), std::sync::Arc::new(engine_access::snapshot(world))),
+            (
+                "player_physics".into(),
+                std::sync::Arc::new(player_physics::snapshot(world, mods)),
+            ),
+            (
+                "engine".into(),
+                std::sync::Arc::new(engine_access::snapshot(world)),
+            ),
         ]);
         mods.native_snapshot = Some((key, std::sync::Arc::new(fields)));
     }
@@ -484,7 +515,9 @@ fn snapshot_ro(world: &World, mods: &mut Mods, camera: Option<[f32; 3]>) -> serd
         .0
         .actions()
         .values();
-    let pad = world.resource::<crate::input::ControllerInput>().raw_input();
+    let pad = world
+        .resource::<crate::input::ControllerInput>()
+        .raw_input();
     let net = network_snapshot(world, mods);
     let local_id = net
         .get("local_id")
@@ -557,10 +590,17 @@ fn fixed(world: &mut World) {
     }
     let dt = world.resource::<Time<Fixed>>().delta_secs_f64();
     world.resource_scope(|world, mut mods: Mut<Mods>| {
-        bridge::take_reactions(&mut mods, &mut world.resource_mut::<crate::physics::GamePhysics>());
+        bridge::take_reactions(
+            &mut mods,
+            &mut world.resource_mut::<crate::physics::GamePhysics>(),
+        );
         let camera = camera_position(world);
         if mods.runtime_busy()
-            || mods.manager.packages.values().any(|package| package.running())
+            || mods
+                .manager
+                .packages
+                .values()
+                .any(|package| package.running())
         {
             mods.manager.snapshot = std::sync::Arc::new(snapshot_ro(world, &mut mods, camera));
         }
@@ -576,9 +616,12 @@ fn fixed(world: &mut World) {
             .collect();
         let player_shapes = if mods.suspended_by.is_empty() && mods.attach.is_none() {
             bridge::player_shapes(world)
-        } else { Vec::new() };
+        } else {
+            Vec::new()
+        };
         for id in ids {
-            let _span = bevy::log::tracing::info_span!("mods.fixed_callback", mod_id = %id).entered();
+            let _span =
+                bevy::log::tracing::info_span!("mods.fixed_callback", mod_id = %id).entered();
             let physics = body_snapshot_for(&mods, &id, &player_shapes);
             // Sync dynamics queries for this mod while on_fixed_update runs.
             struct Host<'a> {
@@ -594,11 +637,10 @@ fn fixed(world: &mut World) {
                     options: &RaycastOptions,
                 ) -> Option<serde_json::Value> {
                     let hit = match options.filter {
-                        RaycastFilter::Ground => self.world.raycast_ground(
-                            origin,
-                            direction,
-                            options.max_distance,
-                        )?,
+                        RaycastFilter::Ground => {
+                            self.world
+                                .raycast_ground(origin, direction, options.max_distance)?
+                        }
                         RaycastFilter::All => {
                             let excluded: Vec<_> = options
                                 .exclude
@@ -714,21 +756,27 @@ fn update(world: &mut World) {
         mods.manager.snapshot = std::sync::Arc::new(snap);
         // UI state must refresh during pause (including network role changes).
         // This callback does not advance Lua simulation time or timers.
-        dispatch_profiled(&mut mods.manager, "on_ui_update", json!({"dt": dt, "paused": paused}));
+        dispatch_profiled(
+            &mut mods.manager,
+            "on_ui_update",
+            json!({"dt": dt, "paused": paused}),
+        );
         if !paused {
             dispatch_profiled(&mut mods.manager, "on_update", json!({"dt": dt}));
         }
         apply(world, &mut mods);
         sync_graphics(world, &mut mods);
         sync_attach(world, &mut mods);
-        let hidden = paused || world.get_resource::<crate::customiser::Customiser>()
-            .is_some_and(|c| c.open);
+        let hidden = paused
+            || world
+                .get_resource::<crate::customiser::Customiser>()
+                .is_some_and(|c| c.open);
         canvas::present(world, &mods.canvases, hidden);
     });
 }
 
 fn clear_runtime(world: &mut World, mods: &mut Mods) {
-    replication::reset(world,mods);
+    replication::reset(world, mods);
     audio::clear(world);
     graphics_dynamic::clear(world);
     canvas::clear_owner(world, &mut mods.canvases, None);
@@ -754,10 +802,11 @@ fn clear_runtime(world: &mut World, mods: &mut Mods) {
     mods.net_remote_wire.clear();
     mods.net_status.clear();
     mods.last_contacts.clear();
-    engine_access::restore_gates(world,mods,None);
-    mods.command_results.clear();mods.input_overrides.clear();
+    engine_access::restore_gates(world, mods, None);
+    mods.command_results.clear();
+    mods.input_overrides.clear();
     mods.debug_owners.clear();
-    player_physics::clear(world,None);
+    player_physics::clear(world, None);
     mods.custom_menus.clear();
     participation::clear(world, mods);
     mods.remote_cameras.clear();
@@ -766,12 +815,14 @@ fn clear_runtime(world: &mut World, mods: &mut Mods) {
     mods.pending_remote_teleport = None;
     volumes::clear(world, mods);
     capture::clear(world);
-    world.resource_mut::<crate::physics::GamePhysics>().set_external_queries(None);
+    world
+        .resource_mut::<crate::physics::GamePhysics>()
+        .set_external_queries(None);
     mods.world = DynamicsWorld::default();
     mods.ground_ready = false;
     mods.camera.clear();
-    mods.detach_pending=None;
-    mods.detach_error=None;
+    mods.detach_pending = None;
+    mods.detach_error = None;
 }
 
 fn retire_graphics(world: &mut World, mods: &mut Mods, key: &(String, String)) {
@@ -792,15 +843,15 @@ fn apply(world: &mut World, mods: &mut Mods) {
     let retired = std::mem::take(&mut mods.manager.retired);
     for id in &retired {
         mods.suspended_by.remove(id);
-        engine_access::restore_gates(world,mods,Some(id));
-        mods.command_results.retain(|(owner,_),_|owner!=id);
-        mods.input_overrides.retain(|_,(owner,_)|owner!=id);
+        engine_access::restore_gates(world, mods, Some(id));
+        mods.command_results.retain(|(owner, _), _| owner != id);
+        mods.input_overrides.retain(|_, (owner, _)| owner != id);
         audio::stop_owner(world, id, true);
         graphics_dynamic::clear_owner(world, id);
         volumes::clear_owner(world, mods, id);
         capture::clear_owner(world, id);
-        player_physics::clear(world,Some(id));
-        mods.custom_menus.retain(|(owner,_),_|owner!=id);
+        player_physics::clear(world, Some(id));
+        mods.custom_menus.retain(|(owner, _), _| owner != id);
         canvas::clear_owner(world, &mut mods.canvases, Some(id));
         detach_if_owner(world, mods, id);
         if mods.camera.owner.as_ref() == Some(id) {
@@ -864,15 +915,15 @@ fn apply(world: &mut World, mods: &mut Mods) {
         }
         if let Err(e) = ensure_ground(world, mods) {
             warn!("Lua mod {id}: {e}");
-            engine_access::restore_gates(world,mods,Some(&id));
+            engine_access::restore_gates(world, mods, Some(&id));
             mods.manager.fail(&id, e);
-            mods.input_overrides.retain(|_,(owner,_)|owner!=&id);
+            mods.input_overrides.retain(|_, (owner, _)| owner != &id);
             audio::stop_owner(world, &id, true);
             graphics_dynamic::clear_owner(world, &id);
             volumes::clear_owner(world, mods, &id);
             capture::clear_owner(world, &id);
-            player_physics::clear(world,Some(&id));
-            mods.custom_menus.retain(|(owner,_),_|owner!=&id);
+            player_physics::clear(world, Some(&id));
+            mods.custom_menus.retain(|(owner, _), _| owner != &id);
             continue;
         }
         commands.sort_by_key(|command| match command {
@@ -889,61 +940,100 @@ fn apply(world: &mut World, mods: &mut Mods) {
         })();
         if let Err(e) = result {
             warn!("Lua mod {id}: {e}");
-            engine_access::restore_gates(world,mods,Some(&id));
+            engine_access::restore_gates(world, mods, Some(&id));
             mods.manager.fail(&id, e);
-            mods.input_overrides.retain(|_,(owner,_)|owner!=&id);
+            mods.input_overrides.retain(|_, (owner, _)| owner != &id);
             audio::stop_owner(world, &id, true);
             graphics_dynamic::clear_owner(world, &id);
             volumes::clear_owner(world, mods, &id);
             capture::clear_owner(world, &id);
-            player_physics::clear(world,Some(&id));
-            mods.custom_menus.retain(|(owner,_),_|owner!=&id);
+            player_physics::clear(world, Some(&id));
+            mods.custom_menus.retain(|(owner, _), _| owner != &id);
         }
     }
     let mut row = 0;
     for entity in mods.overlays.values() {
         if let Some(mut node) = world.get_mut::<Node>(*entity) {
-            let top=px(16. + row as f32 * 28.);
-            if node.top!=top {node.top=top;}
+            let top = px(16. + row as f32 * 28.);
+            if node.top != top {
+                node.top = top;
+            }
             row += 1;
         }
     }
 }
 
-fn apply_one(
-    world: &mut World,
-    mods: &mut Mods,
-    id: &str,
-    command: Command,
-) -> Result<(), String> {
+fn apply_one(world: &mut World, mods: &mut Mods, id: &str, command: Command) -> Result<(), String> {
     match command {
-        Command::RigPart {index,options} => player_physics::set_part(world,id,index,options)?,
-        Command::GraphGate {graph,target,index,enabled} => engine_access::gate(world,mods,id,graph,target,index,enabled)?,
-        Command::EngineInspect {..} => return Err("use commands.request for engine inspection results".into()),
-        Command::Request {key,command,token} => {
-            let slot=(id.to_owned(),key);
-            if !mods.command_results.contains_key(&slot) && mods.command_results.keys().filter(|(o,_)|o==id).count()>=64 {
+        Command::RigPart { index, options } => player_physics::set_part(world, id, index, options)?,
+        Command::GraphGate {
+            graph,
+            target,
+            index,
+            enabled,
+        } => engine_access::gate(world, mods, id, graph, target, index, enabled)?,
+        Command::EngineInspect { .. } => {
+            return Err("use commands.request for engine inspection results".into())
+        }
+        Command::Request {
+            key,
+            command,
+            token,
+        } => {
+            let slot = (id.to_owned(), key);
+            if !mods.command_results.contains_key(&slot)
+                && mods.command_results.keys().filter(|(o, _)| o == id).count() >= 64
+            {
                 return Err("64 command result slots per mod maximum".into());
             }
-            let (result,value)=if let Command::EngineInspect {system}=*command {
-                (Ok(()),engine_access::inspect(world,&system))
-            } else {(apply_one(world,mods,id,*command),Value::Null)};
-            let tick=world.resource::<crate::physics::GamePhysics>().ticks;
+            let (result, value) = if let Command::EngineInspect { system } = *command {
+                (Ok(()), engine_access::inspect(world, &system))
+            } else {
+                (apply_one(world, mods, id, *command), Value::Null)
+            };
+            let tick = world.resource::<crate::physics::GamePhysics>().ticks;
             mods.command_results.insert(slot,json!({"token":token,"ok":result.is_ok(),"error":result.err(),"value":value,"tick":tick}));
         }
-        Command::InputOverride {action,value} => {
-            if mods.input_overrides.get(&action).is_some_and(|(o,_)|o!=id) { return Err("input action owned by another mod".into()); }
-            if let Some(value)=value {mods.input_overrides.insert(action,(id.to_owned(),value));} else {mods.input_overrides.remove(&action);}
+        Command::InputOverride { action, value } => {
+            if mods
+                .input_overrides
+                .get(&action)
+                .is_some_and(|(o, _)| o != id)
+            {
+                return Err("input action owned by another mod".into());
+            }
+            if let Some(value) = value {
+                mods.input_overrides.insert(action, (id.to_owned(), value));
+            } else {
+                mods.input_overrides.remove(&action);
+            }
         }
-        Command::NativeImpulse {body,impulse,point,angular} => {
-            if mods.attach.is_some() || !mods.suspended_by.is_empty() {return Err("native player is attached or suspended".into());}
-            player_physics::impulse(world,&body,impulse,point,angular)?;
+        Command::InputCapture { mouse, keyboard } => {
+            // Host-owned capture state; every mod may release/recapture.
+            if let Some(capture) = world.get_resource_mut::<crate::input::InputCapture>() {
+                capture.into_inner().set(mouse, keyboard);
+            }
         }
-        Command::UiCanvas { key, options } => canvas::set(world, &mut mods.canvases, id, key, options)?,
+        Command::NativeImpulse {
+            body,
+            impulse,
+            point,
+            angular,
+        } => {
+            if mods.attach.is_some() || !mods.suspended_by.is_empty() {
+                return Err("native player is attached or suspended".into());
+            }
+            player_physics::impulse(world, &body, impulse, point, angular)?;
+        }
+        Command::UiCanvas { key, options } => {
+            canvas::set(world, &mut mods.canvases, id, key, options)?
+        }
         Command::UiRemove { key } => {
             let slot = (id.to_owned(), key);
             canvas::remove(world, &mut mods.canvases, &slot);
-            if let Some(e) = mods.overlays.remove(&slot) { world.despawn(e); }
+            if let Some(e) = mods.overlays.remove(&slot) {
+                world.despawn(e);
+            }
         }
         Command::CameraRig { body, options } => {
             resolve_body(mods, id, &body)?;
@@ -971,14 +1061,23 @@ fn apply_one(
         Command::GraphicsMeshBufferAppend { key, data } => {
             graphics_dynamic::mesh_buffer_append(world, mods, id, &key, data)?;
         }
-        Command::GraphicsLight { key, options } => graphics_dynamic::light(world, mods, id, key, options)?,
+        Command::GraphicsLight { key, options } => {
+            graphics_dynamic::light(world, mods, id, key, options)?
+        }
         Command::Log { text } => info!("Lua [{id}]: {text}"),
         Command::MultiplayerDebug { key, text } => {
             let slot = (id.to_owned(), key);
-            if text.is_empty() { mods.multiplayer_debug.remove(&slot); }
-            else {
+            if text.is_empty() {
+                mods.multiplayer_debug.remove(&slot);
+            } else {
                 if !mods.multiplayer_debug.contains_key(&slot)
-                    && mods.multiplayer_debug.keys().filter(|(owner,_)| owner == id).count() >= 8 {
+                    && mods
+                        .multiplayer_debug
+                        .keys()
+                        .filter(|(owner, _)| owner == id)
+                        .count()
+                        >= 8
+                {
                     return Err("8 multiplayer debug entries per mod maximum".into());
                 }
                 mods.multiplayer_debug.insert(slot, text);
@@ -988,12 +1087,16 @@ fn apply_one(
             let k = (id.to_owned(), key);
             // Empty overlay text removes its row rather than leaving a blank slot.
             if text.is_empty() {
-                if let Some(e) = mods.overlays.remove(&k) { world.despawn(e); }
+                if let Some(e) = mods.overlays.remove(&k) {
+                    world.despawn(e);
+                }
                 return Ok(());
             }
             if let Some(entity) = mods.overlays.get(&k) {
                 if let Some(mut t) = world.get_mut::<Text>(*entity) {
-                    if t.0!=text {**t = text;}
+                    if t.0 != text {
+                        **t = text;
+                    }
                     return Ok(());
                 }
             }
@@ -1033,10 +1136,25 @@ fn apply_one(
         }
         Command::PhysicsRemove { key } => {
             mods.native_snapshot = None;
-            if mods.attach.as_ref().is_some_and(|a|a.owner==id && a.body==key) { detach_player(world,mods,true); }
-            let bound:Vec<_>=mods.graphics.iter().filter(|((o,_),g)|o==id && g.body.as_deref()==Some(key.as_str())).map(|(k,_)|k.clone()).collect();
-            for slot in bound { retire_graphics(world,mods,&slot); }
-            if mods.camera.follows(id, &key) { mods.camera.clear(); }
+            if mods
+                .attach
+                .as_ref()
+                .is_some_and(|a| a.owner == id && a.body == key)
+            {
+                detach_player(world, mods, true);
+            }
+            let bound: Vec<_> = mods
+                .graphics
+                .iter()
+                .filter(|((o, _), g)| o == id && g.body.as_deref() == Some(key.as_str()))
+                .map(|(k, _)| k.clone())
+                .collect();
+            for slot in bound {
+                retire_graphics(world, mods, &slot);
+            }
+            if mods.camera.follows(id, &key) {
+                mods.camera.clear();
+            }
             audio::stop_body(world, id, &key);
             graphics_dynamic::remove(world, id, &key);
             let k = (id.to_owned(), key);
@@ -1157,15 +1275,17 @@ fn apply_one(
             if let Some(old) = mods.joints.remove(&k) {
                 mods.world.remove_joint(old);
             }
-            let jid = mods.world.add_prismatic_joint(skate_dynamics::PrismaticJointDesc {
-                body_a: a,
-                body_b: b,
-                anchor_a,
-                anchor_b,
-                axis,
-                limits,
-                contacts_enabled,
-            })?;
+            let jid = mods
+                .world
+                .add_prismatic_joint(skate_dynamics::PrismaticJointDesc {
+                    body_a: a,
+                    body_b: b,
+                    anchor_a,
+                    anchor_b,
+                    axis,
+                    limits,
+                    contacts_enabled,
+                })?;
             mods.joints.insert(k, jid);
         }
         Command::PhysicsJointSpring { key, spring } => {
@@ -1183,31 +1303,76 @@ fn apply_one(
                 mods.world.remove_joint(j);
             }
         }
-        Command::GraphicsMesh { key,path,body,position,rotation,scale,color,visible,opacity,deform_nodes } => {
-            graphics::spawn(world,mods,id,id,key,
-                skate_mods::scene::GraphicsDefinition { path,body,color,opacity,deform_nodes },
-                skate_mods::scene::TransformState { position:position.unwrap_or([0.;3]),rotation:rotation.unwrap_or([0.,0.,0.,1.]),scale },visible,None)?;
+        Command::GraphicsMesh {
+            key,
+            path,
+            body,
+            position,
+            rotation,
+            scale,
+            color,
+            visible,
+            opacity,
+            deform_nodes,
+        } => {
+            graphics::spawn(
+                world,
+                mods,
+                id,
+                id,
+                key,
+                skate_mods::scene::GraphicsDefinition {
+                    path,
+                    body,
+                    color,
+                    opacity,
+                    deform_nodes,
+                },
+                skate_mods::scene::TransformState {
+                    position: position.unwrap_or([0.; 3]),
+                    rotation: rotation.unwrap_or([0., 0., 0., 1.]),
+                    scale,
+                },
+                visible,
+                None,
+            )?;
         }
         Command::GraphicsTransform { key, options } => {
-            let owned=mods.graphics.get_mut(&(id.to_owned(),key)).ok_or("unknown graphics key")?;
+            let owned = mods
+                .graphics
+                .get_mut(&(id.to_owned(), key))
+                .ok_or("unknown graphics key")?;
             owned.transform.apply(&options);
         }
-        Command::GraphicsNode { key,node,options } => graphics::set_node(mods,id,&key,node,options)?,
-        Command::GraphicsResetNode { key,node } => graphics::reset_node(world,mods,id,&key,&node),
+        Command::GraphicsNode { key, node, options } => {
+            graphics::set_node(mods, id, &key, node, options)?
+        }
+        Command::GraphicsResetNode { key, node } => {
+            graphics::reset_node(world, mods, id, &key, &node)
+        }
         Command::PhysicsDebug { enabled } => {
-            if enabled { mods.debug_owners.insert(id.to_owned()); }
-            else { mods.debug_owners.remove(id); }
+            if enabled {
+                mods.debug_owners.insert(id.to_owned());
+            } else {
+                mods.debug_owners.remove(id);
+            }
         }
         Command::GraphicsRemove { key } => {
             graphics_dynamic::remove(world, id, &key);
             retire_graphics(world, mods, &(id.to_owned(), key));
         }
-        Command::GraphicsVisibility { key,visible } => {
-            if let Some(owned)=mods.graphics.get_mut(&(id.to_owned(),key)) { owned.visible=visible; }
+        Command::GraphicsVisibility { key, visible } => {
+            if let Some(owned) = mods.graphics.get_mut(&(id.to_owned(), key)) {
+                owned.visible = visible;
+            }
         }
-        Command::PlayerAttach { body,offset } => attachment::attach(world,mods,id,body,offset)?,
+        Command::PlayerAttach { body, offset } => {
+            attachment::attach(world, mods, id, body, offset)?
+        }
         Command::PlayerDetach { options } => {
-            if mods.attach.as_ref().is_some_and(|a|a.owner==id) { attachment::detach(world,mods,false,&options); }
+            if mods.attach.as_ref().is_some_and(|a| a.owner == id) {
+                attachment::detach(world, mods, false, &options);
+            }
         }
         Command::CameraFollow { body, offset } => {
             if let Some(body) = body {
@@ -1226,14 +1391,14 @@ fn apply_one(
             mods.camera.rig = None;
             mods.camera.follow = None;
             mods.camera.watch = None;
-            mods.camera.fixed = Some((
-                Vec3::from_array(position),
-                look_at.map(Vec3::from_array),
-            ));
+            mods.camera.fixed = Some((Vec3::from_array(position), look_at.map(Vec3::from_array)));
         }
         Command::PlayerSuspend { suspended } => {
-            if suspended { mods.suspended_by.insert(id.to_owned()); }
-            else { mods.suspended_by.remove(id); }
+            if suspended {
+                mods.suspended_by.insert(id.to_owned());
+            } else {
+                mods.suspended_by.remove(id);
+            }
         }
         Command::CameraWatch { peer } => {
             let empty = peer.as_deref().is_none_or(|p| p.is_empty());
@@ -1268,28 +1433,49 @@ fn apply_one(
                 mods.net_states.insert(slot, value);
             }
         }
-        Command::UiMenu {key,options} => {
-            let slot=(id.to_owned(),key);
-            if !mods.custom_menus.contains_key(&slot) && mods.custom_menus.keys().filter(|(o,_)|o==id).count()>=8 {return Err("8 menus per mod maximum".into());}
-            if options.section.is_some() {
-                let others: Vec<_> = mods.custom_menus.iter().filter(|(k,v)| **k != slot && v.section.is_some()).collect();
-                let mut sections: BTreeSet<_> = others.iter().filter_map(|(_,v)| v.section.as_deref()).collect();
-                sections.insert(options.section.as_deref().unwrap());
-                if others.len() >= 64 || sections.len() > 8 { return Err("64 section menus and 8 custom sections maximum".into()); }
+        Command::UiMenu { key, options } => {
+            let slot = (id.to_owned(), key);
+            if !mods.custom_menus.contains_key(&slot)
+                && mods.custom_menus.keys().filter(|(o, _)| o == id).count() >= 8
+            {
+                return Err("8 menus per mod maximum".into());
             }
-            mods.custom_menus.insert(slot,options);
+            if options.section.is_some() {
+                let others: Vec<_> = mods
+                    .custom_menus
+                    .iter()
+                    .filter(|(k, v)| **k != slot && v.section.is_some())
+                    .collect();
+                let mut sections: BTreeSet<_> = others
+                    .iter()
+                    .filter_map(|(_, v)| v.section.as_deref())
+                    .collect();
+                sections.insert(options.section.as_deref().unwrap());
+                if others.len() >= 64 || sections.len() > 8 {
+                    return Err("64 section menus and 8 custom sections maximum".into());
+                }
+            }
+            mods.custom_menus.insert(slot, options);
         }
-        Command::UiRemoveMenu {key} => {mods.custom_menus.remove(&(id.to_owned(),key));}
-        Command::PlayerJoint {joint,options} => player_physics::set(world,id,joint,Some(options))?,
-        Command::PlayerResetJoint {joint} => player_physics::set(world,id,joint,None)?,
-        Command::PlayerResetJoints {} => player_physics::clear(world,Some(id)),
+        Command::UiRemoveMenu { key } => {
+            mods.custom_menus.remove(&(id.to_owned(), key));
+        }
+        Command::PlayerJoint { joint, options } => {
+            player_physics::set(world, id, joint, Some(options))?
+        }
+        Command::PlayerResetJoint { joint } => player_physics::set(world, id, joint, None)?,
+        Command::PlayerResetJoints {} => player_physics::clear(world, Some(id)),
         Command::PlayerTeleport { options } => session::apply_local(world, &options)?,
         Command::SessionClaim {} => session::claim(world, mods)?,
         Command::SessionTransfer { peer } => session::transfer(world, mods, &peer)?,
-        Command::SessionTeleport { peer, options } => session::teleport(world, mods, &peer, options)?,
+        Command::SessionTeleport { peer, options } => {
+            session::teleport(world, mods, &peer, options)?
+        }
         Command::VolumeBox { key, options } => volumes::set(world, mods, id, key, options)?,
         Command::VolumeRemove { key } => volumes::remove(world, mods, id, &key),
-        Command::CameraCapture { key, options } => { capture::set(world, id, key, options)?; }
+        Command::CameraCapture { key, options } => {
+            capture::set(world, id, key, options)?;
+        }
         Command::CameraClearCapture { key } => capture::remove(world, id, &key),
     }
     Ok(())
@@ -1308,14 +1494,20 @@ fn resolve_body_desc(mods: &Mods, owner: &str, mut body: BodyDesc) -> Result<Bod
             let points = resolve_convex_points(mods, owner, body.shape.clone())?;
             body.shape = Shape::Convex { points };
         }
-        Shape::Model { path, object, options } => {
+        Shape::Model {
+            path,
+            object,
+            options,
+        } => {
             let package = mods.manager.packages.get(owner).ok_or("missing package")?;
             if path.is_empty() || !skate_mods::scene::valid_asset(path) {
                 return Err("invalid model GLB path".into());
             }
             let root = package.root.canonicalize().map_err(|e| e.to_string())?;
             let full = root.join(path).canonicalize().map_err(|e| e.to_string())?;
-            if !full.starts_with(&root) { return Err("model GLB escapes its package".into()); }
+            if !full.starts_with(&root) {
+                return Err("model GLB escapes its package".into());
+            }
             body.shape = skate_mods::model_shape_file(&full, object, options)?;
         }
         _ => {}
@@ -1332,29 +1524,40 @@ fn resolve_convex_points(mods: &Mods, owner: &str, shape: Shape) -> Result<Vec<[
             Ok(points)
         }
         Shape::Mesh { path, object } => {
-            let package = mods
-                .manager
-                .packages
-                .get(owner)
-                .ok_or("missing package")?;
-            if !skate_mods::scene::valid_asset(&path) || path.is_empty() { return Err("invalid collider GLB path".into()); }
-            let root=package.root.canonicalize().map_err(|e|e.to_string())?;
-            let full=root.join(&path).canonicalize().map_err(|e|e.to_string())?;
-            if !full.starts_with(&root) { return Err("collider GLB escapes its package".into()); }
+            let package = mods.manager.packages.get(owner).ok_or("missing package")?;
+            if !skate_mods::scene::valid_asset(&path) || path.is_empty() {
+                return Err("invalid collider GLB path".into());
+            }
+            let root = package.root.canonicalize().map_err(|e| e.to_string())?;
+            let full = root.join(&path).canonicalize().map_err(|e| e.to_string())?;
+            if !full.starts_with(&root) {
+                return Err("collider GLB escapes its package".into());
+            }
             glb::convex_points(&full, &object)
         }
         _ => Err("add_collider shape must be mesh or convex".into()),
     }
 }
 
-fn sync_graphics(world: &mut World, mods: &mut Mods) { graphics::sync(world,mods); }
-
-fn sync_attach(world:&mut World,mods:&mut Mods) { attachment::sync(world,mods); }
-fn detach_if_owner(world:&mut World,mods:&mut Mods,owner:&str) {
-    if mods.attach.as_ref().is_some_and(|a|a.owner==owner) { detach_player(world,mods,true); }
+fn sync_graphics(world: &mut World, mods: &mut Mods) {
+    graphics::sync(world, mods);
 }
-fn detach_player(world:&mut World,mods:&mut Mods,forced:bool) {
-    attachment::detach(world,mods,forced,&skate_mods::scene::DetachOptions::default());
+
+fn sync_attach(world: &mut World, mods: &mut Mods) {
+    attachment::sync(world, mods);
+}
+fn detach_if_owner(world: &mut World, mods: &mut Mods, owner: &str) {
+    if mods.attach.as_ref().is_some_and(|a| a.owner == owner) {
+        detach_player(world, mods, true);
+    }
+}
+fn detach_player(world: &mut World, mods: &mut Mods, forced: bool) {
+    attachment::detach(
+        world,
+        mods,
+        forced,
+        &skate_mods::scene::DetachOptions::default(),
+    );
 }
 
 fn sync_net(world: &mut World) {
@@ -1368,7 +1571,11 @@ fn sync_net(world: &mut World) {
             .collect();
         mods.net_states
             .retain(|(owner, _), _| packages.contains_key(owner));
-        mods.session.connect(world.get_resource::<crate::multiplayer::Multiplayer>().and_then(|n| n.session_identity()));
+        mods.session.connect(
+            world
+                .get_resource::<crate::multiplayer::Multiplayer>()
+                .and_then(|n| n.session_identity()),
+        );
         let obs_bytes = observation::encode_local(world, player_suspended(&mods));
         let view_bytes = camera_stream::capture(world);
 
@@ -1426,7 +1633,9 @@ fn sync_net(world: &mut World) {
             }
         }
         if let Some(bytes) = view_bytes {
-            if net.publish_application(camera_stream::KEY, bytes) { published.insert(camera_stream::KEY.into()); }
+            if net.publish_application(camera_stream::KEY, bytes) {
+                published.insert(camera_stream::KEY.into());
+            }
         }
         for (key, bytes) in session::outgoing(&mods, &local_id, is_host, &host_peer) {
             if net.publish_application(&key, bytes) {
@@ -1435,7 +1644,12 @@ fn sync_net(world: &mut World) {
                 failures += 1;
             }
         }
-        for key in mods.net_published.difference(&published).cloned().collect::<Vec<_>>() {
+        for key in mods
+            .net_published
+            .difference(&published)
+            .cloned()
+            .collect::<Vec<_>>()
+        {
             net.publish_application(&key, vec![]);
         }
         mods.net_published = published;
@@ -1520,8 +1734,9 @@ fn sync_net(world: &mut World) {
                 mods.net_remote.len()
             )
         };
-        let solid_status=mods.replication.status.clone();
-        mods.net_status.push_str(" | ");mods.net_status.push_str(&solid_status);
+        let solid_status = mods.replication.status.clone();
+        mods.net_status.push_str(" | ");
+        mods.net_status.push_str(&solid_status);
     });
 }
 
@@ -1530,39 +1745,71 @@ fn camera_sample(mods: &Mods, owner: &str, body: &str) -> Option<vehicle_camera:
     let snap = mods.world.read(id)?;
     Some(vehicle_camera::Sample {
         position: Vec3::from_array(snap.position),
-        rotation: Quat::from_xyzw(snap.rotation[0], snap.rotation[1], snap.rotation[2], snap.rotation[3]).normalize(),
+        rotation: Quat::from_xyzw(
+            snap.rotation[0],
+            snap.rotation[1],
+            snap.rotation[2],
+            snap.rotation[3],
+        )
+        .normalize(),
         velocity: Vec3::from_array(snap.linvel),
     })
 }
 fn record_camera(mods: &mut Mods, dt: f32) {
     let sample = mods.camera.owner.as_ref().and_then(|o| {
-        mods.camera.rig.as_ref().and_then(|r| camera_sample(mods, o, &r.body))
+        mods.camera
+            .rig
+            .as_ref()
+            .and_then(|r| camera_sample(mods, o, &r.body))
     });
     if let Some(sample) = sample {
-        if let Some(r) = mods.camera.rig.as_mut() { r.record(sample, dt); }
-    } else if mods.camera.rig.is_some() { mods.camera.clear(); }
+        if let Some(r) = mods.camera.rig.as_mut() {
+            r.record(sample, dt);
+        }
+    } else if mods.camera.rig.is_some() {
+        mods.camera.clear();
+    }
 }
 
 fn present_camera(world: &mut World) {
-    let camera = world.query_filtered::<Entity, With<crate::camera::GameplayCamera>>()
-        .iter(world).next();
-    let Some(camera) = camera else { return; };
+    let camera = world
+        .query_filtered::<Entity, With<crate::camera::GameplayCamera>>()
+        .iter(world)
+        .next();
+    let Some(camera) = camera else {
+        return;
+    };
     let replay = world.resource::<crate::replay::Replay>().active;
-    let debug_cam = crate::debug_cam::DebugCam::active(world.resource::<crate::camera::CameraRuntime>());
-    let customizing = world.get_resource::<crate::customiser::Customiser>().is_some_and(|c| c.open);
+    let debug_cam =
+        crate::debug_cam::DebugCam::active(world.resource::<crate::camera::CameraRuntime>());
+    let customizing = world
+        .get_resource::<crate::customiser::Customiser>()
+        .is_some_and(|c| c.open);
     let paused = world.resource::<crate::graphics_menu::Menu>().open;
-    let dt = if paused {0.0} else {world.resource::<Time<Real>>().delta_secs().clamp(0.0,0.1)};
-    let alpha = if paused {1.0} else {world.resource::<Time<Fixed>>().overstep_fraction()};
+    let dt = if paused {
+        0.0
+    } else {
+        world.resource::<Time<Real>>().delta_secs().clamp(0.0, 0.1)
+    };
+    let alpha = if paused {
+        1.0
+    } else {
+        world.resource::<Time<Fixed>>().overstep_fraction()
+    };
     world.resource_scope(|world, mut mods: Mut<Mods>| {
         let suppress = replay || customizing || debug_cam;
         if mods.camera.rig.is_none() || suppress {
             if let Some(near) = mods.camera.saved_near.take() {
                 if let Some(mut projection) = world.get_mut::<Projection>(camera) {
-                    if let Projection::Perspective(p) = &mut *projection { p.near = near; }
+                    if let Projection::Perspective(p) = &mut *projection {
+                        p.near = near;
+                    }
                 }
             }
         }
-        if suppress { return; }
+        if suppress {
+            return;
+        }
         if let Some(peer) = mods.camera.watch {
             let local_id = world
                 .get_resource::<crate::multiplayer::Multiplayer>()
@@ -1570,9 +1817,13 @@ fn present_camera(world: &mut World) {
                 .unwrap_or(0);
             if peer != local_id {
                 if let Some(view) = mods.remote_cameras.get(&peer) {
-                    if let Some(mut t) = world.get_mut::<Transform>(camera) { *t = view.transform(); }
+                    if let Some(mut t) = world.get_mut::<Transform>(camera) {
+                        *t = view.transform();
+                    }
                     if let Some(mut p) = world.get_mut::<Projection>(camera) {
-                        if let Projection::Perspective(p) = &mut *p { p.fov = view.fov; }
+                        if let Projection::Perspective(p) = &mut *p {
+                            p.fov = view.fov;
+                        }
                     }
                     return;
                 }
@@ -1604,21 +1855,32 @@ fn present_camera(world: &mut World) {
                 let view = rig.view(sample, dt, &mut mods.world);
                 // Match camera and owned car visuals to the SAME interpolation sample.
                 // Physics remains at the native current pose; only Transform is changed.
-                let entities: Vec<_> = mods.graphics.iter()
-                    .filter(|((o,_),g)| o == &owner && g.body.as_ref() == Some(&rig.body))
-                    .map(|(_,g)|(g.entity,g.transform.clone())).collect();
-                for (e,local) in entities {
+                let entities: Vec<_> = mods
+                    .graphics
+                    .iter()
+                    .filter(|((o, _), g)| o == &owner && g.body.as_ref() == Some(&rig.body))
+                    .map(|(_, g)| (g.entity, g.transform.clone()))
+                    .collect();
+                for (e, local) in entities {
                     if let Some(mut t) = world.get_mut::<Transform>(e) {
-                        t.translation = sample.position + sample.rotation*Vec3::from_array(local.position);
-                        t.rotation = (sample.rotation*Quat::from_array(local.rotation).normalize()).normalize();
-                        t.scale=Vec3::from_array(local.scale);
+                        t.translation =
+                            sample.position + sample.rotation * Vec3::from_array(local.position);
+                        t.rotation = (sample.rotation
+                            * Quat::from_array(local.rotation).normalize())
+                        .normalize();
+                        t.scale = Vec3::from_array(local.scale);
                     }
                 }
-                if let Some(mut transform) = world.get_mut::<Transform>(camera) { *transform = view.transform; }
+                if let Some(mut transform) = world.get_mut::<Transform>(camera) {
+                    *transform = view.transform;
+                }
                 if let Some(mut projection) = world.get_mut::<Projection>(camera) {
                     if let Projection::Perspective(p) = &mut *projection {
-                        if mods.camera.saved_near.is_none() { mods.camera.saved_near = Some(p.near); }
-                        p.near = view.near; p.fov = view.fov;
+                        if mods.camera.saved_near.is_none() {
+                            mods.camera.saved_near = Some(p.near);
+                        }
+                        p.near = view.near;
+                        p.fov = view.fov;
                     }
                 }
             }
@@ -1630,13 +1892,19 @@ fn present_camera(world: &mut World) {
             if let Some(sample) = camera_sample(&mods, &owner, &body) {
                 let eye = sample.position + sample.rotation * offset;
                 if let Some(mut t) = world.get_mut::<Transform>(camera) {
-                    *t = Transform::from_translation(eye).looking_at(sample.position + Vec3::Y * 0.5, Vec3::Y);
+                    *t = Transform::from_translation(eye)
+                        .looking_at(sample.position + Vec3::Y * 0.5, Vec3::Y);
                 }
-            } else { mods.camera.clear(); }
+            } else {
+                mods.camera.clear();
+            }
         } else if let Some((position, look_at)) = mods.camera.fixed {
             if let Some(mut t) = world.get_mut::<Transform>(camera) {
-                if let Some(target) = look_at { *t = Transform::from_translation(position).looking_at(target, Vec3::Y); }
-                else { t.translation = position; }
+                if let Some(target) = look_at {
+                    *t = Transform::from_translation(position).looking_at(target, Vec3::Y);
+                } else {
+                    t.translation = position;
+                }
             }
         }
     });
@@ -1672,28 +1940,83 @@ impl Mods {
         let sync = format!("MOD REPLICATION\n{}\nLocal network keys: {} | Remote keys: {}\nPublished dynamics: {} | Local bodies: {} | Local scenes: {}",
             if self.net_status.is_empty() { "No active mod replication" } else { &self.net_status },
             self.net_states.len(), self.net_remote.len(), self.dyn_published.len(), self.bodies.len(), self.graphics.len());
-        let packages = self.manager.packages.values().map(|p| format!("{} — {}{}",
-            p.manifest.name, if p.running() { "running" } else if p.enabled { "enabled / stopped" } else { "disabled" },
-            p.error.as_ref().map(|e| format!("\n{e}")).unwrap_or_default())).collect::<Vec<_>>().join("\n");
-        let reports = self.multiplayer_debug.iter().map(|((owner,key),text)| {
-            let name = self.manager.packages.get(owner).map_or(owner.as_str(), |p| p.manifest.name.as_str());
-            format!("{name} / {key}\n{text}")
-        }).collect::<Vec<_>>().join("\n\n");
-        [sync, format!("MOD PACKAGES\n{}", if packages.is_empty() { "No packages installed" } else { &packages }),
-            format!("MOD DIAGNOSTICS\n{}", if reports.is_empty() { "No mod multiplayer diagnostics reported" } else { &reports })]
+        let packages = self
+            .manager
+            .packages
+            .values()
+            .map(|p| {
+                format!(
+                    "{} — {}{}",
+                    p.manifest.name,
+                    if p.running() {
+                        "running"
+                    } else if p.enabled {
+                        "enabled / stopped"
+                    } else {
+                        "disabled"
+                    },
+                    p.error
+                        .as_ref()
+                        .map(|e| format!("\n{e}"))
+                        .unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let reports = self
+            .multiplayer_debug
+            .iter()
+            .map(|((owner, key), text)| {
+                let name = self
+                    .manager
+                    .packages
+                    .get(owner)
+                    .map_or(owner.as_str(), |p| p.manifest.name.as_str());
+                format!("{name} / {key}\n{text}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        [
+            sync,
+            format!(
+                "MOD PACKAGES\n{}",
+                if packages.is_empty() {
+                    "No packages installed"
+                } else {
+                    &packages
+                }
+            ),
+            format!(
+                "MOD DIAGNOSTICS\n{}",
+                if reports.is_empty() {
+                    "No mod multiplayer diagnostics reported"
+                } else {
+                    &reports
+                }
+            ),
+        ]
     }
 }
 
-pub(crate) fn override_actions(mods: Option<&Mods>, values: &mut [f32;18]) {
-    if let Some(mods)=mods { for (&id,(_,value)) in &mods.input_overrides {values[id-64]=*value;} }
+pub(crate) fn override_actions(mods: Option<&Mods>, values: &mut [f32; 18]) {
+    if let Some(mods) = mods {
+        for (&id, (_, value)) in &mods.input_overrides {
+            values[id - 64] = *value;
+        }
+    }
 }
 
 /// Retain dispatch ordering while attributing each Lua callback in CPU captures.
 fn dispatch_profiled(manager: &mut skate_mods::Manager, callback: &str, payload: Value) {
-    let ids: Vec<_> = manager.packages.iter().filter(|(_, p)| p.running())
-        .map(|(id, _)| id.clone()).collect();
+    let ids: Vec<_> = manager
+        .packages
+        .iter()
+        .filter(|(_, p)| p.running())
+        .map(|(id, _)| id.clone())
+        .collect();
     for id in ids {
-        let _span = bevy::log::tracing::info_span!("mods.callback", mod_id = %id, callback).entered();
+        let _span =
+            bevy::log::tracing::info_span!("mods.callback", mod_id = %id, callback).entered();
         manager.call(&id, callback, payload.clone());
     }
 }

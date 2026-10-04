@@ -27,7 +27,9 @@ impl TeleportOptions {
         let point = |p: &[f32; 3]| p.iter().all(|v| v.is_finite() && v.abs() <= 100_000.);
         let vel = |p: &[f32; 3]| p.iter().all(|v| v.is_finite() && v.abs() <= 200.);
         point(&self.position)
-            && self.heading.is_none_or(|h| h.is_finite() && h.abs() <= 1000.)
+            && self
+                .heading
+                .is_none_or(|h| h.is_finite() && h.abs() <= 1000.)
             && self.velocity.as_ref().is_none_or(vel)
     }
 }
@@ -58,12 +60,18 @@ impl VolumeOptions {
     pub fn validate(&self) -> bool {
         let point = |p: &[f32; 3]| p.iter().all(|v| v.is_finite() && v.abs() <= 100_000.);
         point(&self.position)
-            && self.size.iter().all(|v| v.is_finite() && *v > 0.01 && *v <= 500.)
+            && self
+                .size
+                .iter()
+                .all(|v| v.is_finite() && *v > 0.01 && *v <= 500.)
             && self
                 .rotation
                 .as_ref()
                 .is_none_or(|q| crate::scene::valid_quaternion(q))
-            && self.color.iter().all(|v| v.is_finite() && (0. ..=1.).contains(v))
+            && self
+                .color
+                .iter()
+                .all(|v| v.is_finite() && (0. ..=1.).contains(v))
             && self.opacity.is_finite()
             && (0. ..=1.).contains(&self.opacity)
     }
@@ -104,9 +112,7 @@ impl CaptureOptions {
 }
 
 fn valid_peer(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 20
-        && s.bytes().all(|b| b.is_ascii_digit())
+    !s.is_empty() && s.len() <= 20 && s.bytes().all(|b| b.is_ascii_digit())
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -119,13 +125,32 @@ pub enum Command {
         key: String,
         text: String,
     },
-    MultiplayerDebug { key: String, text: String },
-    UiCanvas { key: String, options: crate::presentation::CanvasOptions },
-    UiRemove { key: String },
-    CameraRig { body: String, options: crate::presentation::CameraRigOptions },
-    AudioPreload { path: String },
-    AudioPlay { key: String, options: crate::audio::AudioPlayOptions },
-    AudioUpdate { key: String, options: crate::audio::AudioUpdateOptions },
+    MultiplayerDebug {
+        key: String,
+        text: String,
+    },
+    UiCanvas {
+        key: String,
+        options: crate::presentation::CanvasOptions,
+    },
+    UiRemove {
+        key: String,
+    },
+    CameraRig {
+        body: String,
+        options: crate::presentation::CameraRigOptions,
+    },
+    AudioPreload {
+        path: String,
+    },
+    AudioPlay {
+        key: String,
+        options: crate::audio::AudioPlayOptions,
+    },
+    AudioUpdate {
+        key: String,
+        options: crate::audio::AudioUpdateOptions,
+    },
     AudioStop {
         key: String,
         #[serde(default = "crate::audio::default_fade")]
@@ -256,10 +281,22 @@ pub enum Command {
         #[serde(default = "opaque")]
         opacity: f32,
     },
-    GraphicsTransform { key:String, options:crate::scene::TransformOptions },
-    GraphicsNode { key:String, node:String, options:crate::scene::TransformOptions },
-    GraphicsResetNode { key:String, node:String },
-    PhysicsDebug { enabled:bool },
+    GraphicsTransform {
+        key: String,
+        options: crate::scene::TransformOptions,
+    },
+    GraphicsNode {
+        key: String,
+        node: String,
+        options: crate::scene::TransformOptions,
+    },
+    GraphicsResetNode {
+        key: String,
+        node: String,
+    },
+    PhysicsDebug {
+        enabled: bool,
+    },
     GraphicsRemove {
         key: String,
     },
@@ -272,7 +309,10 @@ pub enum Command {
         #[serde(default)]
         offset: [f32; 3],
     },
-    PlayerDetach { #[serde(default)] options:crate::scene::DetachOptions },
+    PlayerDetach {
+        #[serde(default)]
+        options: crate::scene::DetachOptions,
+    },
     CameraFollow {
         body: Option<String>,
         #[serde(default = "cam_offset")]
@@ -292,18 +332,62 @@ pub enum Command {
         #[serde(default)]
         value: Value,
     },
-    UiMenu { key:String, options:crate::extensions::MenuOptions },
-    UiRemoveMenu { key:String },
-    RigPart {index:usize, options:Option<crate::extensions::PartOverride>},
-    GraphGate { graph:String, target:String, index:usize, enabled:Option<bool> },
-    EngineInspect { system:String },
-    Request { key:String, #[serde(default)] token:u64, command:Box<Command> },
-    InputOverride { action:usize, value:Option<f32> },
-    NativeImpulse { body:crate::extensions::NativeBodyRef, impulse:[f32;3], point:Option<[f32;3]>, angular:bool },
-    PlayerJoint { joint:usize, options:crate::extensions::JointOverride },
-    PlayerResetJoint { joint:usize },
+    UiMenu {
+        key: String,
+        options: crate::extensions::MenuOptions,
+    },
+    UiRemoveMenu {
+        key: String,
+    },
+    RigPart {
+        index: usize,
+        options: Option<crate::extensions::PartOverride>,
+    },
+    GraphGate {
+        graph: String,
+        target: String,
+        index: usize,
+        enabled: Option<bool>,
+    },
+    EngineInspect {
+        system: String,
+    },
+    Request {
+        key: String,
+        #[serde(default)]
+        token: u64,
+        command: Box<Command>,
+    },
+    InputOverride {
+        action: usize,
+        value: Option<f32>,
+    },
+    /// Capture (true) or release (false) the mouse and/or keyboard. Absent
+    /// fields are left unchanged. A released device stops feeding gameplay
+    /// while keys and the pointer remain available as events to scripts/UI.
+    InputCapture {
+        #[serde(default)]
+        mouse: Option<bool>,
+        #[serde(default)]
+        keyboard: Option<bool>,
+    },
+    NativeImpulse {
+        body: crate::extensions::NativeBodyRef,
+        impulse: [f32; 3],
+        point: Option<[f32; 3]>,
+        angular: bool,
+    },
+    PlayerJoint {
+        joint: usize,
+        options: crate::extensions::JointOverride,
+    },
+    PlayerResetJoint {
+        joint: usize,
+    },
     PlayerResetJoints {},
-    PlayerSuspend { suspended: bool },
+    PlayerSuspend {
+        suspended: bool,
+    },
     PlayerTeleport {
         options: TeleportOptions,
     },
@@ -362,26 +446,62 @@ impl Command {
         let vec3 = |p: &[f32; 3]| p.iter().all(|v| v.is_finite());
         let quat = crate::scene::valid_quaternion;
         match self {
-            Self::RigPart {index,options} => *index<26 && options.as_ref().is_none_or(|o|o.validate()),
-            Self::GraphGate {graph,target,index,..} => matches!(graph.as_str(),"action"|"motion") && matches!(target.as_str(),"state"|"transition"|"behavior") && *index<65536,
-            Self::EngineInspect {system} => matches!(system.as_str(),"graphs"|"scoring"),
-            Self::Request {key,command,token} => *token<=9_007_199_254_740_991 && crate::schema::valid_id(key) && !matches!(**command,Self::Request{..}) && command.validate(),
-            Self::InputOverride {action,value} => (64..=81).contains(action) && value.is_none_or(|v|v.is_finite() && (-1.0..=1.0).contains(&v)),
-            Self::NativeImpulse {body,impulse,point:p,..} => body.validate() && impulse.iter().all(|v|v.is_finite() && v.abs()<=100_000.) && p.as_ref().is_none_or(point),
+            Self::RigPart { index, options } => {
+                *index < 26 && options.as_ref().is_none_or(|o| o.validate())
+            }
+            Self::GraphGate {
+                graph,
+                target,
+                index,
+                ..
+            } => {
+                matches!(graph.as_str(), "action" | "motion")
+                    && matches!(target.as_str(), "state" | "transition" | "behavior")
+                    && *index < 65536
+            }
+            Self::EngineInspect { system } => matches!(system.as_str(), "graphs" | "scoring"),
+            Self::Request {
+                key,
+                command,
+                token,
+            } => {
+                *token <= 9_007_199_254_740_991
+                    && crate::schema::valid_id(key)
+                    && !matches!(**command, Self::Request { .. })
+                    && command.validate()
+            }
+            Self::InputOverride { action, value } => {
+                (64..=81).contains(action)
+                    && value.is_none_or(|v| v.is_finite() && (-1.0..=1.0).contains(&v))
+            }
+            Self::InputCapture { mouse, keyboard } => mouse.is_some() || keyboard.is_some(),
+            Self::NativeImpulse {
+                body,
+                impulse,
+                point: p,
+                ..
+            } => {
+                body.validate()
+                    && impulse.iter().all(|v| v.is_finite() && v.abs() <= 100_000.)
+                    && p.as_ref().is_none_or(point)
+            }
             Self::Log { text } => text.len() <= 2048,
-            Self::Overlay { key, text } | Self::MultiplayerDebug { key, text } => crate::schema::valid_id(key) && text.len() <= 1024,
+            Self::Overlay { key, text } | Self::MultiplayerDebug { key, text } => {
+                crate::schema::valid_id(key) && text.len() <= 1024
+            }
             Self::UiCanvas { key, options } => crate::schema::valid_id(key) && options.validate(),
             Self::UiRemove { key } => crate::schema::valid_id(key),
-            Self::CameraRig { body, options } => crate::schema::valid_id(body) && options.validate(),
-            Self::AudioPreload { path } => crate::audio::valid_audio_path(path),
-            Self::AudioPlay { key, options } => {
-                crate::schema::valid_id(key) && options.validate()
+            Self::CameraRig { body, options } => {
+                crate::schema::valid_id(body) && options.validate()
             }
+            Self::AudioPreload { path } => crate::audio::valid_audio_path(path),
+            Self::AudioPlay { key, options } => crate::schema::valid_id(key) && options.validate(),
             Self::AudioUpdate { key, options } => {
                 crate::schema::valid_id(key) && options.validate()
             }
             Self::AudioStop { key, fade_out } => {
-                crate::schema::valid_id(key) && fade_out.is_finite()
+                crate::schema::valid_id(key)
+                    && fade_out.is_finite()
                     && (0.0..=2.0).contains(fade_out)
             }
             Self::AudioStopAll {} => true,
@@ -394,13 +514,19 @@ impl Command {
             Self::GraphicsMeshBufferAppend { key, data } => {
                 crate::schema::valid_id(key)
                     && !data.positions.is_empty()
-                    && data.positions.len() <= crate::graphics_dynamic::MAX_MESH_BUFFER_APPEND_VERTICES
+                    && data.positions.len()
+                        <= crate::graphics_dynamic::MAX_MESH_BUFFER_APPEND_VERTICES
             }
             Self::GraphicsLight { key, options } => {
                 crate::schema::valid_id(key) && options.validate()
             }
             Self::PhysicsSpawn { key, body } => {
-                crate::schema::valid_id(key) && body.deformation.as_ref().is_none_or(|o|o.validate().is_ok()) && serde_json::to_value(body).is_ok()
+                crate::schema::valid_id(key)
+                    && body
+                        .deformation
+                        .as_ref()
+                        .is_none_or(|o| o.validate().is_ok())
+                    && serde_json::to_value(body).is_ok()
             }
             Self::PhysicsRemove { key }
             | Self::PhysicsRemoveJoint { key }
@@ -419,7 +545,10 @@ impl Command {
                     && match shape {
                         Shape::Convex { points } => {
                             (4..=512).contains(&points.len())
-                                && points.iter().flatten().all(|v| v.is_finite() && v.abs() <= 1000.)
+                                && points
+                                    .iter()
+                                    .flatten()
+                                    .all(|v| v.is_finite() && v.abs() <= 1000.)
                         }
                         Shape::Mesh { path, object } => {
                             !path.is_empty()
@@ -432,22 +561,26 @@ impl Command {
                         _ => false,
                     }
             }
-            Self::PhysicsForce { key, force, point: p }
+            Self::PhysicsForce {
+                key,
+                force,
+                point: p,
+            }
             | Self::PhysicsImpulse {
                 key,
                 impulse: force,
                 point: p,
-            } => {
-                crate::schema::valid_id(key)
-                    && vec3(force)
-                    && p.as_ref().is_none_or(|p| point(p))
-            }
+            } => crate::schema::valid_id(key) && vec3(force) && p.as_ref().is_none_or(|p| point(p)),
             Self::PhysicsTorque { key, torque }
             | Self::PhysicsTorqueImpulse { key, torque }
-            | Self::PhysicsSetLinvel { key, linvel: torque }
-            | Self::PhysicsSetAngvel { key, angvel: torque } => {
-                crate::schema::valid_id(key) && vec3(torque)
+            | Self::PhysicsSetLinvel {
+                key,
+                linvel: torque,
             }
+            | Self::PhysicsSetAngvel {
+                key,
+                angvel: torque,
+            } => crate::schema::valid_id(key) && vec3(torque),
             Self::PhysicsSetPose {
                 key,
                 position,
@@ -526,7 +659,11 @@ impl Command {
                     && point(anchor_b)
                     && vec3(axis)
                     && limits.is_none_or(|[min, max]| {
-                        min.is_finite() && max.is_finite() && min <= max && min.abs() <= 10. && max.abs() <= 10.
+                        min.is_finite()
+                            && max.is_finite()
+                            && min <= max
+                            && min.abs() <= 10.
+                            && max.abs() <= 10.
                     })
             }
             Self::PhysicsJointSpring { key, spring } => {
@@ -554,7 +691,8 @@ impl Command {
             } => {
                 crate::schema::valid_id(key)
                     && crate::scene::valid_asset(path)
-                    && deform_nodes.len()<=64 && deform_nodes.iter().all(|s|crate::scene::valid_node(s))
+                    && deform_nodes.len() <= 64
+                    && deform_nodes.iter().all(|s| crate::scene::valid_node(s))
                     && body.as_ref().is_none_or(|b| crate::schema::valid_id(b))
                     && position.as_ref().is_none_or(|p| point(p))
                     && rotation.as_ref().is_none_or(|q| quat(q))
@@ -565,13 +703,20 @@ impl Command {
                     && opacity.is_finite()
                     && (0. ..=1.).contains(opacity)
             }
-            Self::PlayerAttach { body, offset } => {
-                crate::schema::valid_id(body) && point(offset)
+            Self::PlayerAttach { body, offset } => crate::schema::valid_id(body) && point(offset),
+            Self::GraphicsTransform { key, options } => {
+                crate::schema::valid_id(key)
+                    && options.validate()
+                    && options.relative.is_none()
+                    && options.linear_velocity.is_none()
+                    && options.angular_velocity.is_none()
             }
-            Self::GraphicsTransform { key, options } => crate::schema::valid_id(key) && options.validate()
-                && options.relative.is_none() && options.linear_velocity.is_none() && options.angular_velocity.is_none(),
-            Self::GraphicsNode { key, node, options } => crate::schema::valid_id(key) && crate::scene::valid_node(node) && options.validate(),
-            Self::GraphicsResetNode { key, node } => crate::schema::valid_id(key) && crate::scene::valid_node(node),
+            Self::GraphicsNode { key, node, options } => {
+                crate::schema::valid_id(key) && crate::scene::valid_node(node) && options.validate()
+            }
+            Self::GraphicsResetNode { key, node } => {
+                crate::schema::valid_id(key) && crate::scene::valid_node(node)
+            }
             Self::PhysicsDebug { .. } => true,
             Self::PlayerDetach { options } => options.validate(),
             Self::CameraFollow { body, offset } => {
@@ -580,17 +725,17 @@ impl Command {
             Self::CameraSet { position, look_at } => {
                 point(position) && look_at.as_ref().is_none_or(|p| point(p))
             }
-            Self::CameraWatch { peer } => peer
-                .as_ref()
-                .is_none_or(|p| p.is_empty() || valid_peer(p)),
+            Self::CameraWatch { peer } => {
+                peer.as_ref().is_none_or(|p| p.is_empty() || valid_peer(p))
+            }
             Self::NetworkState { key, value } => {
                 crate::schema::valid_id(key)
                     && serde_json::to_vec(value).is_ok_and(|v| v.len() <= 512)
             }
-            Self::UiMenu {key,options} => crate::schema::valid_id(key) && options.validate(),
-            Self::UiRemoveMenu {key} => crate::schema::valid_id(key),
-            Self::PlayerJoint {joint,options} => *joint < 22 && options.validate(),
-            Self::PlayerResetJoint {joint} => *joint < 22,
+            Self::UiMenu { key, options } => crate::schema::valid_id(key) && options.validate(),
+            Self::UiRemoveMenu { key } => crate::schema::valid_id(key),
+            Self::PlayerJoint { joint, options } => *joint < 22 && options.validate(),
+            Self::PlayerResetJoint { joint } => *joint < 22,
             Self::PlayerResetJoints {} => true,
             Self::PlayerSuspend { .. } => true,
             Self::PlayerTeleport { options } => options.validate(),
@@ -611,12 +756,13 @@ impl Command {
 /// null to a null *userdata*, which is truthy and blows up on indexing.
 fn command_kind(command: &Command) -> &'static str {
     match command {
-        Command::RigPart {..} => "rig_part",
-        Command::GraphGate {..} => "graph_gate",
-        Command::EngineInspect {..} => "engine_inspect",
-        Command::Request {..} => "request",
-        Command::InputOverride {..} => "input_override",
-        Command::NativeImpulse {..} => "native_impulse",
+        Command::RigPart { .. } => "rig_part",
+        Command::GraphGate { .. } => "graph_gate",
+        Command::EngineInspect { .. } => "engine_inspect",
+        Command::Request { .. } => "request",
+        Command::InputOverride { .. } => "input_override",
+        Command::InputCapture { .. } => "input_capture",
+        Command::NativeImpulse { .. } => "native_impulse",
         Command::Log { .. } => "log",
         Command::Overlay { .. } => "overlay",
         Command::MultiplayerDebug { .. } => "multiplayer_debug",
@@ -800,38 +946,62 @@ fn json_to_lua(lua: &Lua, value: &Value) -> mlua::Result<mlua::Value> {
 // Only a root field that Lua reads is converted. Returned field tables are
 // ordinary complete Lua tables, preserving length, pairs and serde behavior.
 #[cfg(test)]
-fn lazy_snapshot(lua:&Lua, snapshot:Arc<Value>, physics:Option<Value>)->mlua::Result<Table> {
+fn lazy_snapshot(lua: &Lua, snapshot: Arc<Value>, physics: Option<Value>) -> mlua::Result<Table> {
     lazy_snapshot_fields(lua, snapshot, physics, crate::SnapshotFields::default())
 }
 
-fn lazy_snapshot_fields(lua:&Lua, snapshot:Arc<Value>, physics:Option<Value>, fields:crate::SnapshotFields)->mlua::Result<Table> {
-    let defaults=std::sync::LazyLock::force(&SNAPSHOT_DEFAULTS);
-    let table=lua.create_table()?;
-    if let Some(physics)=physics {table.raw_set("physics",json_to_lua(lua,&physics)?)?;}
-    let meta=lua.create_table()?;
-    let index_snapshot=snapshot.clone();
-    let index_fields=fields.clone();
-    meta.set("__index",lua.create_function(move |lua,(table,key):(Table,String)| {
-        let value=index_fields.get(&key).map(|v|v.as_ref()).or_else(||index_snapshot.get(&key)).filter(|v|!v.is_null()).or_else(||SNAPSHOT_DEFAULTS.get(&key));
-        let value=value.map_or(Ok(mlua::Value::Nil),|v|json_to_lua(lua,v))?;
-        table.raw_set(key,value.clone())?;
-        Ok(value)
-    })?)?;
+fn lazy_snapshot_fields(
+    lua: &Lua,
+    snapshot: Arc<Value>,
+    physics: Option<Value>,
+    fields: crate::SnapshotFields,
+) -> mlua::Result<Table> {
+    let defaults = std::sync::LazyLock::force(&SNAPSHOT_DEFAULTS);
+    let table = lua.create_table()?;
+    if let Some(physics) = physics {
+        table.raw_set("physics", json_to_lua(lua, &physics)?)?;
+    }
+    let meta = lua.create_table()?;
+    let index_snapshot = snapshot.clone();
+    let index_fields = fields.clone();
+    meta.set(
+        "__index",
+        lua.create_function(move |lua, (table, key): (Table, String)| {
+            let value = index_fields
+                .get(&key)
+                .map(|v| v.as_ref())
+                .or_else(|| index_snapshot.get(&key))
+                .filter(|v| !v.is_null())
+                .or_else(|| SNAPSHOT_DEFAULTS.get(&key));
+            let value = value.map_or(Ok(mlua::Value::Nil), |v| json_to_lua(lua, v))?;
+            table.raw_set(key, value.clone())?;
+            Ok(value)
+        })?,
+    )?;
     // pairs(snapshot) explicitly requests every root field.
-    let next:mlua::Function=lua.globals().get("next")?;
-    meta.set("__pairs",lua.create_function(move |_,table:Table| {
-        // Most callbacks read a few named fields. Build the root-key union
-        // only when iteration actually requests the complete snapshot.
-        let keys=snapshot.as_object().into_iter().flat_map(|o|o.keys())
-            .chain(fields.keys()).chain(defaults.as_object().unwrap().keys())
-            .collect::<std::collections::BTreeSet<_>>();
-        for key in keys {let _:mlua::Value=table.get(key.as_str())?;}
-        Ok((next.clone(),table,mlua::Value::Nil))
-    })?)?;
+    let next: mlua::Function = lua.globals().get("next")?;
+    meta.set(
+        "__pairs",
+        lua.create_function(move |_, table: Table| {
+            // Most callbacks read a few named fields. Build the root-key union
+            // only when iteration actually requests the complete snapshot.
+            let keys = snapshot
+                .as_object()
+                .into_iter()
+                .flat_map(|o| o.keys())
+                .chain(fields.keys())
+                .chain(defaults.as_object().unwrap().keys())
+                .collect::<std::collections::BTreeSet<_>>();
+            for key in keys {
+                let _: mlua::Value = table.get(key.as_str())?;
+            }
+            Ok((next.clone(), table, mlua::Value::Nil))
+        })?,
+    )?;
     table.set_metatable(Some(meta))?;
     Ok(table)
 }
-static SNAPSHOT_DEFAULTS:std::sync::LazyLock<Value>=std::sync::LazyLock::new(default_snapshot);
+static SNAPSHOT_DEFAULTS: std::sync::LazyLock<Value> = std::sync::LazyLock::new(default_snapshot);
 
 fn query_value(lua: &Lua, value: Value) -> mlua::Result<mlua::Value> {
     json_to_lua(lua, &value)
@@ -914,6 +1084,7 @@ impl Vm {
             capabilities.set("command_results", 1)?;
             capabilities.set("native_bodies", 1)?;
             capabilities.set("input_override", 1)?;
+            capabilities.set("input_capture", 1)?;
             capabilities.set("player_overlap", 1)?;
             capabilities.set("landed_details", 1)?;
             capabilities.set("camera", 3)?;
@@ -964,12 +1135,14 @@ impl Vm {
             )?;
             sdk.set(
                 "_raycast",
-                lua.create_function(|lua, (origin, direction, options): (mlua::Value, mlua::Value, mlua::Value)| {
-                    let origin: [f32; 3] = lua.from_value(origin)?;
-                    let direction: [f32; 3] = lua.from_value(direction)?;
-                    let options: crate::query::RaycastOptions = lua.from_value(options)?;
-                    query_value(lua, crate::query::raycast_json(origin, direction, options))
-                })?,
+                lua.create_function(
+                    |lua, (origin, direction, options): (mlua::Value, mlua::Value, mlua::Value)| {
+                        let origin: [f32; 3] = lua.from_value(origin)?;
+                        let direction: [f32; 3] = lua.from_value(direction)?;
+                        let options: crate::query::RaycastOptions = lua.from_value(options)?;
+                        query_value(lua, crate::query::raycast_json(origin, direction, options))
+                    },
+                )?,
             )?;
             sdk.set(
                 "_velocity_at",
@@ -980,14 +1153,16 @@ impl Vm {
             )?;
             sdk.set(
                 "_effective_inv_mass",
-                lua.create_function(|lua, (key, point, direction): (String, mlua::Value, mlua::Value)| {
-                    let point: [f32; 3] = lua.from_value(point)?;
-                    let direction: [f32; 3] = lua.from_value(direction)?;
-                    query_value(
-                        lua,
-                        crate::query::effective_inv_mass_json(key, point, direction),
-                    )
-                })?,
+                lua.create_function(
+                    |lua, (key, point, direction): (String, mlua::Value, mlua::Value)| {
+                        let point: [f32; 3] = lua.from_value(point)?;
+                        let direction: [f32; 3] = lua.from_value(direction)?;
+                        query_value(
+                            lua,
+                            crate::query::effective_inv_mass_json(key, point, direction),
+                        )
+                    },
+                )?,
             )?;
             sdk.set(
                 "_spring_ray",
@@ -1070,15 +1245,30 @@ impl Vm {
         payload: Value,
         snapshot: &Value,
     ) -> Result<Vec<Command>, String> {
-        self.call_shared(name,payload,&Arc::new(snapshot.clone()),None,&crate::SnapshotFields::default())
+        self.call_shared(
+            name,
+            payload,
+            &Arc::new(snapshot.clone()),
+            None,
+            &crate::SnapshotFields::default(),
+        )
     }
 
-    pub fn call_shared(&mut self,name:&str,payload:Value,snapshot:&Arc<Value>,physics:Option<Value>,fields:&crate::SnapshotFields)->Result<Vec<Command>,String> {
+    pub fn call_shared(
+        &mut self,
+        name: &str,
+        payload: Value,
+        snapshot: &Arc<Value>,
+        physics: Option<Value>,
+        fields: &crate::SnapshotFields,
+    ) -> Result<Vec<Command>, String> {
         self.budget.store(LUA_BUDGET_UNITS, Ordering::Relaxed);
         let invoke = || -> mlua::Result<bool> {
-            let callback=self.callbacks.get::<Option<mlua::Function>>(name)?;
+            let callback = self.callbacks.get::<Option<mlua::Function>>(name)?;
             if callback.is_none() {
-                if name != "on_update" { return Ok(false); }
+                if name != "on_update" {
+                    return Ok(false);
+                }
                 let dt = payload["dt"].as_f64().unwrap_or(0.);
                 // Advance the clock even for mods with no update callback. Only
                 // a due timer can observe this frame, so otherwise no snapshot
@@ -1091,18 +1281,28 @@ impl Vm {
             let sdk = self.lua.globals().get::<Table>("sdk")?;
             let rig_source = snapshot.clone();
             let rig_fields = fields.clone();
-            sdk.set("_rig_snapshot", self.lua.create_function(move |lua, fields: Vec<String>| {
-                let result = lua.create_table_with_capacity(0, fields.len())?;
-                let rig = rig_fields.get("player_physics").map(|v|v.as_ref()).or_else(||rig_source.get("player_physics")).filter(|v| !v.is_null())
-                    .unwrap_or(&SNAPSHOT_DEFAULTS["player_physics"]);
-                for field in fields {
-                    if let Some(value) = rig.get(&field) {
-                        result.raw_set(field, json_to_lua(lua, value)?)?;
+            sdk.set(
+                "_rig_snapshot",
+                self.lua.create_function(move |lua, fields: Vec<String>| {
+                    let result = lua.create_table_with_capacity(0, fields.len())?;
+                    let rig = rig_fields
+                        .get("player_physics")
+                        .map(|v| v.as_ref())
+                        .or_else(|| rig_source.get("player_physics"))
+                        .filter(|v| !v.is_null())
+                        .unwrap_or(&SNAPSHOT_DEFAULTS["player_physics"]);
+                    for field in fields {
+                        if let Some(value) = rig.get(&field) {
+                            result.raw_set(field, json_to_lua(lua, value)?)?;
+                        }
                     }
-                }
-                Ok(result)
-            })?)?;
-            sdk.set("snapshot", lazy_snapshot_fields(&self.lua,snapshot.clone(),physics,fields.clone())?)?;
+                    Ok(result)
+                })?,
+            )?;
+            sdk.set(
+                "snapshot",
+                lazy_snapshot_fields(&self.lua, snapshot.clone(), physics, fields.clone())?,
+            )?;
             if let Some(f) = callback {
                 f.call::<()>(self.lua.to_value(&payload)?)?;
             }
@@ -1113,7 +1313,11 @@ impl Vm {
             Ok(true)
         };
         let result = invoke().and_then(|ran| {
-            if ran { self.lua.gc_step().map(|_| ()) } else { Ok(()) }
+            if ran {
+                self.lua.gc_step().map(|_| ())
+            } else {
+                Ok(())
+            }
         });
         let remaining = self.budget.load(Ordering::Relaxed);
         let used = LUA_BUDGET_UNITS.saturating_sub(remaining);
@@ -1161,21 +1365,35 @@ mod driving_extension_tests {
             json!({"kind":"ui_remove", "key":"dash"}),
         ];
         for value in commands {
-            let c:Command=serde_json::from_value(value).unwrap();
+            let c: Command = serde_json::from_value(value).unwrap();
             assert!(c.validate());
         }
-        let c:Command=serde_json::from_value(json!({"kind":"camera_rig","body":"chassis","options":{"fov":1000.0}})).unwrap();
+        let c: Command = serde_json::from_value(
+            json!({"kind":"camera_rig","body":"chassis","options":{"fov":1000.0}}),
+        )
+        .unwrap();
         assert!(!c.validate());
-        assert!(serde_json::from_value::<Command>(json!({"kind":"camera_rig","body":"chassis","options":{"unknown":2}})).is_err());
+        assert!(serde_json::from_value::<Command>(
+            json!({"kind":"camera_rig","body":"chassis","options":{"unknown":2}})
+        )
+        .is_err());
     }
 
     #[test]
     fn real_lua_wrapper_crosses_serde_boundary() {
-        use std::time::{SystemTime,UNIX_EPOCH};
-        let root=std::env::temp_dir().join(format!("skate-driving-api-{}-{}",
-            std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let root = std::env::temp_dir().join(format!(
+            "skate-driving-api-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("main.lua"), r#"
+        std::fs::write(
+            root.join("main.lua"),
+            r#"
             return { on_load=function()
                 sdk.camera.rig('chassis', {mode='hood', collision=false, fov_gain=0})
                 sdk.ui.canvas('dash', {visible=false, items={}})
@@ -1188,35 +1406,52 @@ mod driving_extension_tests {
                 sdk.ui.multiplayer_debug("replication", "Ready")
                 sdk.ui.multiplayer_debug("replication", "")
             end }
-        "#).unwrap();
-        let manifest:Manifest=serde_json::from_value(json!({
+        "#,
+        )
+        .unwrap();
+        let manifest: Manifest = serde_json::from_value(json!({
             "id":"tests.driving","api":2,"name":"Driving contract test", "version":"1.0.0",
             "author":"test","description":"test","entry":"main.lua","settings":{}
-        })).unwrap();
+        }))
+        .unwrap();
         manifest.validate().unwrap();
-        let snap=json!({"physics":{"bodies":{}}});
-        let mut vm=Vm::new(&root,&manifest,&BTreeMap::new(),&snap).unwrap();
-        let out=vm.call("on_load",json!({}),&snap).unwrap();
-        assert_eq!(out.len(),7);
-        match &out[0] { Command::CameraRig{options,..}=>{
-            assert_eq!(options.mode,crate::presentation::CameraMode::Hood);
-            assert!(!options.collision);assert_eq!(options.fov_gain,0.0);
-        }, _=>panic!("wrong camera command") }
-        match &out[1] { Command::UiCanvas{options,..}=>{
-            assert!(!options.visible);assert!(options.items.is_empty());
-        }, _=>panic!("wrong canvas command") }
-        match &out[2] { Command::UiCanvas{options,..}=>{
-            assert_eq!(options.items.len(),2);assert_eq!(options.items[0].size[0],0.0);
-            assert_eq!(options.items[0].color,[0.0;4]);
-        }, _=>panic!("wrong canvas command") }
-        assert!(matches!(out[3],Command::UiRemove{..}));
-        assert!(matches!(&out[4],Command::CameraFollow{body:None,..}));
-        assert!(matches!(&out[5],Command::MultiplayerDebug{key,text} if key=="replication" && text=="Ready"));
+        let snap = json!({"physics":{"bodies":{}}});
+        let mut vm = Vm::new(&root, &manifest, &BTreeMap::new(), &snap).unwrap();
+        let out = vm.call("on_load", json!({}), &snap).unwrap();
+        assert_eq!(out.len(), 7);
+        match &out[0] {
+            Command::CameraRig { options, .. } => {
+                assert_eq!(options.mode, crate::presentation::CameraMode::Hood);
+                assert!(!options.collision);
+                assert_eq!(options.fov_gain, 0.0);
+            }
+            _ => panic!("wrong camera command"),
+        }
+        match &out[1] {
+            Command::UiCanvas { options, .. } => {
+                assert!(!options.visible);
+                assert!(options.items.is_empty());
+            }
+            _ => panic!("wrong canvas command"),
+        }
+        match &out[2] {
+            Command::UiCanvas { options, .. } => {
+                assert_eq!(options.items.len(), 2);
+                assert_eq!(options.items[0].size[0], 0.0);
+                assert_eq!(options.items[0].color, [0.0; 4]);
+            }
+            _ => panic!("wrong canvas command"),
+        }
+        assert!(matches!(out[3], Command::UiRemove { .. }));
+        assert!(matches!(&out[4], Command::CameraFollow { body: None, .. }));
+        assert!(
+            matches!(&out[5],Command::MultiplayerDebug{key,text} if key=="replication" && text=="Ready")
+        );
         assert!(matches!(&out[6],Command::MultiplayerDebug{text,..} if text.is_empty()));
-        drop(vm);std::fs::remove_dir_all(root).unwrap();
+        drop(vm);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
-
 
 #[cfg(test)]
 mod solid_extension_tests {
@@ -1245,7 +1480,10 @@ mod solid_extension_tests {
             let command: Command = serde_json::from_value(value).unwrap();
             assert!(!command.validate());
         }
-        assert!(serde_json::from_value::<Command>(json!({"kind":"graphics_node", "key":"scene", "node":"pivot", "options":{"unknown":1}})).is_err());
+        assert!(serde_json::from_value::<Command>(
+            json!({"kind":"graphics_node", "key":"scene", "node":"pivot", "options":{"unknown":1}})
+        )
+        .is_err());
     }
 }
 
@@ -1257,8 +1495,14 @@ mod model_collision_extension_tests {
     #[test]
     fn native_capabilities_debug_and_model_spawn_cross_real_lua_serde_boundary() {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let root = std::env::temp_dir().join(format!("skate-model-api-{}-{}", std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let root = std::env::temp_dir().join(format!(
+            "skate-model-api-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("main.lua"), r#"
             return {on_load=function()
@@ -1274,18 +1518,28 @@ mod model_collision_extension_tests {
         "#).unwrap();
         let manifest: Manifest = serde_json::from_value(json!({"id":"tests.model", "api":2,
             "name":"Model API contract", "version":"1.0.0", "author":"test", "description":"test",
-            "entry":"main.lua", "settings":{}})).unwrap();
+            "entry":"main.lua", "settings":{}}))
+        .unwrap();
         manifest.validate().unwrap();
         let snapshot = json!({"physics":{"bodies":{}}});
         let mut vm = Vm::new(&root, &manifest, &BTreeMap::new(), &snapshot).unwrap();
         let commands = vm.call("on_load", json!({}), &snapshot).unwrap();
         assert_eq!(commands.len(), 2);
-        assert!(matches!(&commands[0], Command::PhysicsDebug {enabled:true}));
+        assert!(matches!(
+            &commands[0],
+            Command::PhysicsDebug { enabled: true }
+        ));
         match &commands[1] {
-            Command::PhysicsSpawn {body,..} => match &body.shape {
-                Shape::Model {path,object,options} => {
-                    assert_eq!(path, "visual.glb"); assert_eq!(object, "part");
-                    assert_eq!(options.scale, [1.;3]); assert!(options.validate().is_ok());
+            Command::PhysicsSpawn { body, .. } => match &body.shape {
+                Shape::Model {
+                    path,
+                    object,
+                    options,
+                } => {
+                    assert_eq!(path, "visual.glb");
+                    assert_eq!(object, "part");
+                    assert_eq!(options.scale, [1.; 3]);
+                    assert!(options.validate().is_ok());
                 }
                 _ => panic!("model descriptor was not retained"),
             },
@@ -1300,10 +1554,8 @@ mod model_collision_extension_tests {
     /// mods legitimately check attachment state during startup cleanup.
     #[test]
     fn snapshot_readers_work_before_the_host_has_built_a_snapshot() {
-        let root = std::env::temp_dir().join(format!(
-            "skate-mods-null-snapshot-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("skate-mods-null-snapshot-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
             root.join("main.lua"),
@@ -1538,10 +1790,22 @@ mod multiplayer_debug_tests {
     #[test]
     fn multiplayer_debug_reports_are_bounded_and_clearable() {
         for text in [String::new(), "Ready".into(), "x".repeat(1024)] {
-            assert!(Command::MultiplayerDebug { key: "replication".into(), text }.validate());
+            assert!(Command::MultiplayerDebug {
+                key: "replication".into(),
+                text
+            }
+            .validate());
         }
-        assert!(!Command::MultiplayerDebug { key: "replication".into(), text: "x".repeat(1025) }.validate());
-        assert!(!Command::MultiplayerDebug { key: "../bad".into(), text: "Ready".into() }.validate());
+        assert!(!Command::MultiplayerDebug {
+            key: "replication".into(),
+            text: "x".repeat(1025)
+        }
+        .validate());
+        assert!(!Command::MultiplayerDebug {
+            key: "../bad".into(),
+            text: "Ready".into()
+        }
+        .validate());
     }
 }
 
@@ -1550,9 +1814,12 @@ mod snapshot_performance_tests {
     use super::*;
     #[test]
     fn timer_only_mods_observe_fresh_snapshots_and_keep_callback_order() {
-        let root=std::env::temp_dir().join(format!("skate-timer-snapshot-{}",std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("skate-timer-snapshot-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("main.lua"),r#"
+        std::fs::write(
+            root.join("main.lua"),
+            r#"
             return {on_load=function()
                 sdk.time.after('first',0.02,function()
                     assert(sdk.snapshot.tick==2 and sdk.time.elapsed==0.02)
@@ -1563,19 +1830,30 @@ mod snapshot_performance_tests {
                     end)
                 end)
             end}
-        "#).unwrap();
-        let manifest:Manifest=serde_json::from_value(serde_json::json!({
+        "#,
+        )
+        .unwrap();
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
             "id":"tests.timer-snapshot","api":2,"name":"Timer snapshots","version":"1.0.0",
             "author":"test","description":"test","entry":"main.lua","settings":{}
-        })).unwrap();
-        let mut vm=Vm::new(&root,&manifest,&BTreeMap::new(),&Value::Null).unwrap();
-        vm.call("on_load",serde_json::json!({}),&Value::Null).unwrap();
-        for (tick,expected) in [(1,None),(2,Some("first")),(3,Some("next")),(4,None)] {
-            let commands=vm.call("on_update",serde_json::json!({"dt":0.01}),
-                &serde_json::json!({"tick":tick})).unwrap();
-            if let Some(expected)=expected {
+        }))
+        .unwrap();
+        let mut vm = Vm::new(&root, &manifest, &BTreeMap::new(), &Value::Null).unwrap();
+        vm.call("on_load", serde_json::json!({}), &Value::Null)
+            .unwrap();
+        for (tick, expected) in [(1, None), (2, Some("first")), (3, Some("next")), (4, None)] {
+            let commands = vm
+                .call(
+                    "on_update",
+                    serde_json::json!({"dt":0.01}),
+                    &serde_json::json!({"tick":tick}),
+                )
+                .unwrap();
+            if let Some(expected) = expected {
                 assert!(matches!(&commands[..], [Command::Overlay{text,..}] if text==expected));
-            } else { assert!(commands.is_empty()); }
+            } else {
+                assert!(commands.is_empty());
+            }
         }
         drop(vm);
         std::fs::remove_file(root.join("main.lua")).unwrap();
@@ -1583,9 +1861,11 @@ mod snapshot_performance_tests {
     }
     #[test]
     fn incremental_collection_releases_native_frames_but_preserves_retained_snapshots() {
-        let root=std::env::temp_dir().join(format!("skate-snapshot-gc-{}",std::process::id()));
+        let root = std::env::temp_dir().join(format!("skate-snapshot-gc-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("main.lua"),r#"
+        std::fs::write(
+            root.join("main.lua"),
+            r#"
             local first
             return {on_fixed_update=function(e)
                 if not first then first=sdk.snapshot end
@@ -1594,33 +1874,49 @@ mod snapshot_performance_tests {
                     assert(first.tick==1 and #first.player_physics.joints==22)
                 end
             end}
-        "#).unwrap();
-        let manifest:Manifest=serde_json::from_value(serde_json::json!({
+        "#,
+        )
+        .unwrap();
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
             "id":"tests.snapshot-gc","api":2,"name":"Snapshot collection","version":"1.0.0",
             "author":"test","description":"test","entry":"main.lua","settings":{}
-        })).unwrap();
-        let mut vm=Vm::new(&root,&manifest,&BTreeMap::new(),&Value::Null).unwrap();
-        let mut frames=Vec::new();
+        }))
+        .unwrap();
+        let mut vm = Vm::new(&root, &manifest, &BTreeMap::new(), &Value::Null).unwrap();
+        let mut frames = Vec::new();
         for tick in 1..=1024 {
-            let mut snapshot=fixture();
-            Arc::make_mut(&mut snapshot)["tick"]=serde_json::json!(tick);
+            let mut snapshot = fixture();
+            Arc::make_mut(&mut snapshot)["tick"] = serde_json::json!(tick);
             frames.push(Arc::downgrade(&snapshot));
-            vm.call_shared("on_fixed_update",serde_json::json!({"tick":tick}),
-                &snapshot,None,&crate::SnapshotFields::default()).unwrap();
+            vm.call_shared(
+                "on_fixed_update",
+                serde_json::json!({"tick":tick}),
+                &snapshot,
+                None,
+                &crate::SnapshotFields::default(),
+            )
+            .unwrap();
         }
-        assert!(frames[0].upgrade().is_some(),"Lua retained the first snapshot");
-        assert!(frames[1..512].iter().all(|f| f.upgrade().is_none()),
-            "discarded native snapshots must be reclaimed during dispatch");
+        assert!(
+            frames[0].upgrade().is_some(),
+            "Lua retained the first snapshot"
+        );
+        assert!(
+            frames[1..512].iter().all(|f| f.upgrade().is_none()),
+            "discarded native snapshots must be reclaimed during dispatch"
+        );
         drop(vm);
-        assert!(frames.iter().all(|f|f.upgrade().is_none()));
+        assert!(frames.iter().all(|f| f.upgrade().is_none()));
         std::fs::remove_file(root.join("main.lua")).unwrap();
         std::fs::remove_dir(root).unwrap();
     }
     #[test]
     fn shared_native_fields_support_projected_full_and_retained_reads() {
-        let root=std::env::temp_dir().join(format!("skate-shared-fields-{}",std::process::id()));
+        let root = std::env::temp_dir().join(format!("skate-shared-fields-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("main.lua"),r#"
+        std::fs::write(
+            root.join("main.lua"),
+            r#"
             local old
             return {on_update=function()
                 local current=sdk.rig.read({'tick'})
@@ -1633,61 +1929,109 @@ mod snapshot_performance_tests {
                 assert(full.joints[1].name=='JOINT_LEFT_ARM')
                 full.joints[1].name='mod-local mutation'
             end}
-        "#).unwrap();
-        let manifest:Manifest=serde_json::from_value(serde_json::json!({
+        "#,
+        )
+        .unwrap();
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
             "id":"tests.shared-fields","api":2,"name":"Shared fields","version":"1.0.0",
             "author":"test","description":"test","entry":"main.lua","settings":{}
-        })).unwrap();
-        let mut vm=Vm::new(&root,&manifest,&BTreeMap::new(),&Value::Null).unwrap();
-        for tick in [1,2] {
-            let mut rig=fixture()["player_physics"].clone();rig["tick"]=serde_json::json!(tick);
-            let fields=Arc::new(BTreeMap::from([("player_physics".into(),Arc::new(rig))]));
-            vm.call_shared("on_update",serde_json::json!({"dt":0.01}),
-                &Arc::new(serde_json::json!({"tick":tick})),None,&fields).unwrap();
-            assert_eq!(fields["player_physics"]["joints"][0]["name"],"JOINT_LEFT_ARM");
+        }))
+        .unwrap();
+        let mut vm = Vm::new(&root, &manifest, &BTreeMap::new(), &Value::Null).unwrap();
+        for tick in [1, 2] {
+            let mut rig = fixture()["player_physics"].clone();
+            rig["tick"] = serde_json::json!(tick);
+            let fields = Arc::new(BTreeMap::from([("player_physics".into(), Arc::new(rig))]));
+            vm.call_shared(
+                "on_update",
+                serde_json::json!({"dt":0.01}),
+                &Arc::new(serde_json::json!({"tick":tick})),
+                None,
+                &fields,
+            )
+            .unwrap();
+            assert_eq!(
+                fields["player_physics"]["joints"][0]["name"],
+                "JOINT_LEFT_ARM"
+            );
         }
-        drop(vm);std::fs::remove_file(root.join("main.lua")).unwrap();std::fs::remove_dir(root).unwrap();
+        drop(vm);
+        std::fs::remove_file(root.join("main.lua")).unwrap();
+        std::fs::remove_dir(root).unwrap();
     }
-    fn fixture()->Arc<Value> {
+    fn fixture() -> Arc<Value> {
         let joints=(0..22).map(|i|serde_json::json!({"index":i,"name":"JOINT_LEFT_ARM","parameters":vec![0;16],"frames":vec![0;20],"load":{"solver_words":vec![0;96],"force":[1,2,3]}})).collect::<Vec<_>>();
-        Arc::new(serde_json::json!({"tick":1,"player":{"score":123,"position":[1,2,3]},"player_physics":{"joints":joints,"contacts":(0..64).map(|i|serde_json::json!({"id":i,"point":[1,2,3],"force":[1,2,3],"impulse":[1,2,3],"normal":[0,1,0],"a":{"kind":"skater","index":1},"b":{"kind":"world"}})).collect::<Vec<_>>()},"engine":{"graphs":{"states":vec![0;1500]}}}))
+        Arc::new(
+            serde_json::json!({"tick":1,"player":{"score":123,"position":[1,2,3]},"player_physics":{"joints":joints,"contacts":(0..64).map(|i|serde_json::json!({"id":i,"point":[1,2,3],"force":[1,2,3],"impulse":[1,2,3],"normal":[0,1,0],"a":{"kind":"skater","index":1},"b":{"kind":"world"}})).collect::<Vec<_>>()},"engine":{"graphs":{"states":vec![0;1500]}}}),
+        )
     }
     #[test]
     fn lazy_fields_are_complete_isolated_and_retained_across_callbacks() {
-        let lua=Lua::new();let snapshot=fixture();
-        let a=lazy_snapshot(&lua,snapshot.clone(),Some(serde_json::json!({"bodies":{"owned":{}}}))).unwrap();
-        lua.globals().set("a",a.clone()).unwrap();
+        let lua = Lua::new();
+        let snapshot = fixture();
+        let a = lazy_snapshot(
+            &lua,
+            snapshot.clone(),
+            Some(serde_json::json!({"bodies":{"owned":{}}})),
+        )
+        .unwrap();
+        lua.globals().set("a", a.clone()).unwrap();
         lua.load("assert(rawget(a,'player_physics')==nil); assert(a.player.score==123); a.player.score=5; assert(rawget(a,'player_physics')==nil); assert(a.physics.bodies.owned)").exec().unwrap();
-        let b=lazy_snapshot(&lua,snapshot,None).unwrap();lua.globals().set("b",b).unwrap();
+        let b = lazy_snapshot(&lua, snapshot, None).unwrap();
+        lua.globals().set("b", b).unwrap();
         lua.load("assert(b.player.score==123); assert(a.player.score==5); local n=0;for k,v in pairs(a) do n=n+1 end;assert(n>10);assert(#a.player_physics.joints==22);assert(#a.player_physics.joints[1].load.solver_words==96)").exec().unwrap();
     }
     #[test]
-    #[ignore="headless marshaling benchmark; not an FPS claim"]
+    #[ignore = "headless marshaling benchmark; not an FPS claim"]
     fn compare_eager_and_demand_driven_snapshot_cost() {
-        let snapshot=fixture();let lua=Lua::new();let reads:mlua::Function=lua.load("return function(s) return s.player.score end").eval().unwrap();
-        let iterations=120;let mods=6;
-        let begin=std::time::Instant::now();
-        for _ in 0..iterations {for _ in 0..mods {for _ in 0..3 {
-            let full=json_to_lua(&lua,&complete(&snapshot)).unwrap();std::hint::black_box(reads.call::<i64>(full).unwrap());
-        }}}
-        let eager=begin.elapsed();lua.gc_collect().unwrap();
-        let begin=std::time::Instant::now();
-        for _ in 0..iterations {for _ in 0..mods {
-            // Missing UI callback does no conversion; update/fixed read only player.
-            for _ in 0..2 {let lazy=lazy_snapshot(&lua,snapshot.clone(),None).unwrap();std::hint::black_box(reads.call::<i64>(lazy).unwrap());}
-        }}
-        let lazy=begin.elapsed();
+        let snapshot = fixture();
+        let lua = Lua::new();
+        let reads: mlua::Function = lua
+            .load("return function(s) return s.player.score end")
+            .eval()
+            .unwrap();
+        let iterations = 120;
+        let mods = 6;
+        let begin = std::time::Instant::now();
+        for _ in 0..iterations {
+            for _ in 0..mods {
+                for _ in 0..3 {
+                    let full = json_to_lua(&lua, &complete(&snapshot)).unwrap();
+                    std::hint::black_box(reads.call::<i64>(full).unwrap());
+                }
+            }
+        }
+        let eager = begin.elapsed();
+        lua.gc_collect().unwrap();
+        let begin = std::time::Instant::now();
+        for _ in 0..iterations {
+            for _ in 0..mods {
+                // Missing UI callback does no conversion; update/fixed read only player.
+                for _ in 0..2 {
+                    let lazy = lazy_snapshot(&lua, snapshot.clone(), None).unwrap();
+                    std::hint::black_box(reads.call::<i64>(lazy).unwrap());
+                }
+            }
+        }
+        let lazy = begin.elapsed();
         lua.gc_collect().unwrap();
         let rig_reads:mlua::Function=lua.load("return function(s) local rig=s.player_physics; local n=#rig.contacts; for _,j in ipairs(rig.joints) do n=n+j.index end; return n end").eval().unwrap();
-        let begin=std::time::Instant::now();
-        for _ in 0..iterations {for mod_index in 0..mods {
-            for callback in 0..2 {
-                let lazy=lazy_snapshot(&lua,snapshot.clone(),None).unwrap();
-                std::hint::black_box(reads.call::<i64>(lazy.clone()).unwrap());
-                if mod_index==0 && callback==1 {std::hint::black_box(rig_reads.call::<i64>(lazy).unwrap());}
+        let begin = std::time::Instant::now();
+        for _ in 0..iterations {
+            for mod_index in 0..mods {
+                for callback in 0..2 {
+                    let lazy = lazy_snapshot(&lua, snapshot.clone(), None).unwrap();
+                    std::hint::black_box(reads.call::<i64>(lazy.clone()).unwrap());
+                    if mod_index == 0 && callback == 1 {
+                        std::hint::black_box(rig_reads.call::<i64>(lazy).unwrap());
+                    }
+                }
             }
-        }}
-        eprintln!("SNAPSHOT_RIG_BENCH six_mods_one_full_rig_reader_ms_per_frame={:.3}",begin.elapsed().as_secs_f64()*1000./iterations as f64);
+        }
+        eprintln!(
+            "SNAPSHOT_RIG_BENCH six_mods_one_full_rig_reader_ms_per_frame={:.3}",
+            begin.elapsed().as_secs_f64() * 1000. / iterations as f64
+        );
         eprintln!("SNAPSHOT_BENCH bytes={} mods={mods} iterations={iterations} eager_ms_per_frame={:.3} lazy_ms_per_frame={:.3} ratio={:.1}",serde_json::to_vec(&*snapshot).unwrap().len(),eager.as_secs_f64()*1000./iterations as f64,lazy.as_secs_f64()*1000./iterations as f64,eager.as_secs_f64()/lazy.as_secs_f64());
     }
 }
@@ -1697,17 +2041,26 @@ mod deformation_api_tests {
     use super::*;
     #[test]
     fn generic_deformation_descriptors_cross_lua_command_boundary() {
-        let lua=Lua::new();
-        let value:mlua::Value=lua.load(r#"return {
+        let lua = Lua::new();
+        let value: mlua::Value = lua
+            .load(
+                r#"return {
             kind='physics_spawn',key='metal_prop',body={
                 shape={type='box',half_extents={1,1,1}},body_type='dynamic',
                 deformation={yield_speed=3,compliance=0.03,resolution={9,5,17}}
-            }}"#).eval().unwrap();
-        let command:Command=lua.from_value(value).unwrap();
-        let Command::PhysicsSpawn {body,..}=command else {panic!()};
-        assert_eq!(body.deformation.unwrap().yield_speed,3.);
-        let command:Command=serde_json::from_value(serde_json::json!({"kind":"graphics_mesh","key":"visual",
-            "path":"prop.glb","body":"metal_prop","deform_nodes":["shell"]})).unwrap();
+            }}"#,
+            )
+            .eval()
+            .unwrap();
+        let command: Command = lua.from_value(value).unwrap();
+        let Command::PhysicsSpawn { body, .. } = command else {
+            panic!()
+        };
+        assert_eq!(body.deformation.unwrap().yield_speed, 3.);
+        let command: Command =
+            serde_json::from_value(serde_json::json!({"kind":"graphics_mesh","key":"visual",
+            "path":"prop.glb","body":"metal_prop","deform_nodes":["shell"]}))
+            .unwrap();
         assert!(command.validate());
     }
 }
