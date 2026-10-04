@@ -65,6 +65,16 @@ New-Item -ItemType Directory -Force -Path $dist | Out-Null
 Copy-Item (Join-Path $root 'target\release\skate3rust.exe') (Join-Path $dist 'skate3rust.exe') -Force
 Copy-Item (Join-Path $serverGo 'bin\skated.exe') (Join-Path $dist 'skated.exe') -Force
 
+# Server-side Lua resources travel beside skated.exe; without them, scripting is
+# simply idle. The packaged server runs with dist/ as its working directory, so
+# the default `-resources resources` resolves here.
+$luaResources = Join-Path $serverGo 'resources'
+if (Test-Path -LiteralPath $luaResources) {
+    $luaDest = Join-Path $dist 'resources'
+    if (Test-Path -LiteralPath $luaDest) { Remove-Item -LiteralPath $luaDest -Recurse -Force }
+    Copy-Item -LiteralPath $luaResources -Destination $luaDest -Recurse -Force
+}
+
 # Dynamic linking needs bevy_dylib.dll beside the exe; static does not.
 $dylib = Join-Path $dist 'bevy_dylib.dll'
 if ($Dynamic) {
