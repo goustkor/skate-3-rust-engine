@@ -4,7 +4,8 @@
 #
 # Every process opens in its OWN titled console, which shows that process's logs
 # live; the launcher terminal only prints status. Output is also written to
-# logs/ so the launcher can detect readiness.
+# logs/ so the launcher can detect readiness. With -Tui the server console runs
+# the interactive dashboard instead and mirrors its logs to logs/ itself.
 #
 # Every process is placed in a Windows Job Object with KILL_ON_JOB_CLOSE, so
 # closing this terminal (or Ctrl+C, or a crash) tears down the server and all
@@ -17,6 +18,7 @@
 #   powershell -File scripts/dev-multiplayer.ps1 -Map maps/University.skate
 #   powershell -File scripts/dev-multiplayer.ps1 -NoServer          # server already running
 #   powershell -File scripts/dev-multiplayer.ps1 -UseBuiltServer    # prefer server-go/bin/skated.exe
+#   powershell -File scripts/dev-multiplayer.ps1 -Tui               # server console shows the TUI dashboard
 #   powershell -File scripts/dev-multiplayer.ps1 -DryRun            # print commands only
 param(
     [ValidateRange(1, 10)][int]$Instances = 2,
@@ -26,6 +28,7 @@ param(
     [string]$Map,
     [switch]$TestWorld,
     [switch]$UseBuiltServer,
+    [switch]$Tui,
     [int]$StartupTimeoutMinutes = 15,
     [switch]$DryRun
 )
@@ -198,6 +201,25 @@ function Start-TitledConsole {
         -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded" -PassThru
 }
 
+# Like Start-TitledConsole, but runs the command directly in the console instead
+# of piping its output through Tee. The TUI needs a real terminal (a pipe is not
+# a TTY), so it cannot run behind the Tee pipeline; the server mirrors its logs
+# to a file with -logfile for readiness detection instead.
+function Start-TitledConsoleDirect {
+    param(
+        [Parameter(Mandatory)][string]$Title,
+        [Parameter(Mandatory)][string]$Exe,
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [Parameter(Mandatory)][string]$WorkDir
+    )
+    $cmdLine = (Quote-Argument $Exe) + ' ' + (($Arguments | ForEach-Object { Quote-Argument $_ }) -join ' ')
+    $script = "`$Host.UI.RawUI.WindowTitle = $(PS-Literal $Title)`r`n" +
+        "cmd.exe /c $(PS-Literal $cmdLine)"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+    return Start-Process -FilePath $powershellExe -WorkingDirectory $WorkDir `
+        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded" -PassThru
+}
+
 $run = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $logs = Join-Path $workspace "logs/multiplayer-dev-$run"
 Write-Host 'Dev multiplayer: server via `go run`, clients via `cargo run` (first run compiles).' -ForegroundColor Cyan
@@ -218,10 +240,20 @@ try {
             $serverArgs = @('run', './cmd/skated', '-bind', $Server, '-timeout', '30s')
         }
         $serverLog = Join-Path $logs 'server.log'
+        if ($Tui) {
+            # The dashboard owns the console, so the server cannot have its
+            # stdout piped through Tee. It mirrors logs to a file instead, which
+            # keeps the readiness check below working.
+            $serverArgs += @('-tui', '-logfile', $serverLog)
+        }
         if ($DryRun) {
             Write-Host ("SERVER  [Server]: {0} {1}" -f $serverExe, ($serverArgs -join ' '))
         } else {
-            $serverProcess = Start-TitledConsole -Title 'Server' -Exe $serverExe -Arguments $serverArgs -LogFile $serverLog -WorkDir $serverGo
+            if ($Tui) {
+                $serverProcess = Start-TitledConsoleDirect -Title 'Server' -Exe $serverExe -Arguments $serverArgs -WorkDir $serverGo
+            } else {
+                $serverProcess = Start-TitledConsole -Title 'Server' -Exe $serverExe -Arguments $serverArgs -LogFile $serverLog -WorkDir $serverGo
+            }
             Add-ToJob $serverProcess.Id
             $deadline = [DateTime]::UtcNow.AddSeconds(30)
             while (-not (Get-LogText $serverLog).Contains('listening')) {
@@ -230,6 +262,7 @@ try {
                 Start-Sleep -Milliseconds 300
             }
             Write-Host "Server running (PID $($serverProcess.Id))." -ForegroundColor Cyan
+            if ($Tui) { Write-Host 'Server console shows the TUI dashboard; press q there (or close the window) to stop it.' -ForegroundColor Cyan }
         }
     }
 

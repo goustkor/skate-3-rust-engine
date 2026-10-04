@@ -79,9 +79,10 @@ Run the authoritative session server and several game clients from source,
 without building a `dist/` package:
 
 ```powershell
-scripts\multiplayer-dev.bat                 # server + 2 clients
+scripts\multiplayer-dev.bat                 # server + 2 clients (server console runs the TUI)
 scripts\multiplayer-dev.bat --instances 3   # server + 3 clients
 scripts\multiplayer-dev.bat --test-world    # lightweight test scene
+scripts\multiplayer-dev.bat --no-tui        # plain server console instead of the TUI
 scripts\multiplayer-dev.bat --dry-run       # print the commands only
 ```
 
@@ -99,8 +100,14 @@ launcher terminal (or Ctrl+C) stops the server and all clients automatically**.
 Close the game windows to stop normally, or pass `--no-server` to attach to a
 server you started yourself.
 
+The server's own console runs the interactive dashboard by default: lobbies and
+members, live metrics, chat, the log tail and the registered resources (keys:
+`q` quit, `tab` logs/chat, `↑`/`↓` select). Pass `--no-tui` for a plain log
+stream. The launcher still detects readiness because the server mirrors its log
+to `logs/…/server.log` via `-logfile`.
+
 `scripts\dev-multiplayer.ps1` exposes the extra options (`-Instances`, `-Map`,
-`-Assets`, `-Server`, `-UseBuiltServer`). A client connects with
+`-Assets`, `-Server`, `-UseBuiltServer`, `-Tui`). A client connects with
 `cargo run -p skate-game --bin skate3rust -- --net-server 127.0.0.1:31030
 --multi-instance --gpu-backend vulkan`.
 
