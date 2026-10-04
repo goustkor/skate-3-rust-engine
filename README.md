@@ -73,6 +73,37 @@ numbered releases are published separately.
 Custom animations and climbing support remain available, but no custom clips
 are shipped. The included format-demo map is original procedural content.
 
+## Local multiplayer (development)
+
+Run the authoritative session server and several game clients from source,
+without building a `dist/` package:
+
+```powershell
+scripts\multiplayer-dev.bat                 # server + 2 clients
+scripts\multiplayer-dev.bat --instances 3   # server + 3 clients
+scripts\multiplayer-dev.bat --test-world    # lightweight test scene
+scripts\multiplayer-dev.bat --dry-run       # print the commands only
+```
+
+The launcher starts the Go session server with `go run` and each client with
+`cargo run`. The first invocation compiles the debug profile; later ones reuse
+it. It waits for each client's first physics tick before starting the next, so
+map loading and shader compilation do not overlap.
+
+Each process opens in its **own titled console** that shows that process's live
+logs — `Server` for `skated`, and `Player 1`, `Player 2`, … for the clients
+(whose published player name is also `Player N`). The launcher terminal itself
+prints only status. The full output is also written to `logs/multiplayer-dev-*`.
+Every process is placed in a Windows kill-on-close job, so **closing the
+launcher terminal (or Ctrl+C) stops the server and all clients automatically**.
+Close the game windows to stop normally, or pass `--no-server` to attach to a
+server you started yourself.
+
+`scripts\dev-multiplayer.ps1` exposes the extra options (`-Instances`, `-Map`,
+`-Assets`, `-Server`, `-UseBuiltServer`). A client connects with
+`cargo run -p skate-game --bin skate3rust -- --net-server 127.0.0.1:31030
+--multi-instance --gpu-backend vulkan`.
+
 Implementation notes are in [`docs/`](docs/). Patched Bevy dependencies and
 their licenses are in [`vendor/`](vendor/). This is an unofficial project,
 not affiliated with EA.
