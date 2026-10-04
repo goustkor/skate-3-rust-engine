@@ -42,7 +42,8 @@ hello.encode(&mut bytes)?;
 ```
 
 The types mirror the proto package `skate.v1`: `Envelope` plus the control
-(`Hello`, `Welcome`, `Reject`, `Ping`, `Pong`, `Roster`, `Goodbye`) and gameplay
-(`Snapshot`, `BodySnapshot`, `PoseSnapshot`, `ApplicationRecord`) messages.
+(`Hello`, `Welcome`, `Reject`, `Ping`, `Pong`, `Roster`, `Goodbye`), gameplay
+(`Snapshot`, `BodySnapshot`, `PoseSnapshot`, `ApplicationRecord`) and chat
+(`ChatMessage`) messages.
 
 [prost]: https://github.com/tokio-rs/prost

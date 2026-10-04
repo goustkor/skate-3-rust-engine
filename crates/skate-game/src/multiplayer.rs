@@ -1,6 +1,7 @@
 //! Transport-neutral ten-player free-skate; each player owns their simulation.
 pub(crate) mod appearance;
 mod appearance_transfer;
+mod chat;
 mod hud;
 mod nametags;
 mod render;
@@ -158,6 +159,30 @@ impl Remote {
 pub const NAME_KEY: &str = "mp:name";
 const MAX_NAME: usize = 16;
 
+/// Maximum runes in one chat line. Matches the server's `protocol.ChatMaxChars`.
+pub(crate) const CHAT_MAX_CHARS: usize = 200;
+/// Maximum retained chat lines in the local scrollback.
+const CHAT_LOG_MAX: usize = 100;
+/// Visible chat lines drawn by the overlay.
+pub(crate) const CHAT_VISIBLE: usize = 8;
+
+/// One chat line retained for the local scrollback.
+#[derive(Clone, Debug)]
+pub(crate) struct ChatLine {
+    pub actor: u64,
+    pub text: String,
+}
+
+/// Keyboard focus for the chat overlay. `open` drives both input capture and
+/// the gameplay gate; `handled` marks a frame where chat consumed the keyboard
+/// so the menu does not react to the same key press.
+#[derive(Resource, Default)]
+pub(crate) struct ChatInput {
+    pub open: bool,
+    pub draft: String,
+    pub handled: bool,
+}
+
 #[derive(Component, Clone, Copy)]
 pub(crate) struct NetworkActor(pub u64);
 
@@ -193,6 +218,10 @@ pub(crate) struct Multiplayer {
     pub player_name: String,
     name_path: std::path::PathBuf,
     names: BTreeMap<u64, String>,
+    /// Local scrollback, oldest first.
+    chat_log: VecDeque<ChatLine>,
+    /// Highest chat seq seen per author, for ordering and duplicate rejection.
+    last_chat_seq: BTreeMap<u64, u32>,
 }
 impl Multiplayer {
     pub(crate) fn diagnostic_summary(&self) -> String {
@@ -292,6 +321,44 @@ impl Multiplayer {
     pub fn set_player_name(&mut self, name: String) {
         self.player_name = name.chars().take(MAX_NAME).collect();
         persist_player_name(&self.name_path, &self.player_name);
+    }
+    /// Chat is only wired into the authoritative session-server path.
+    pub(crate) fn chat_available(&self) -> bool {
+        self.server.is_some()
+    }
+    /// Sanitises, length-limits and sends a chat line. The server echoes it
+    /// back with the authoritative actor and ordering, so nothing is appended
+    /// locally here. Returns false when the line is empty or chat is offline.
+    pub(crate) fn send_chat(&mut self, text: &str) -> bool {
+        let text = sanitize_chat(text);
+        if text.is_empty() {
+            return false;
+        }
+        let Some(server) = &mut self.server else {
+            return false;
+        };
+        if !server.is_connected() {
+            info!("CHAT_DROP: session not connected");
+            return false;
+        }
+        info!("CHAT_SEND chars={}", text.chars().count());
+        server.publish_chat(text);
+        true
+    }
+    /// The retained chat scrollback, oldest first.
+    pub(crate) fn chat_log(&self) -> &VecDeque<ChatLine> {
+        &self.chat_log
+    }
+    /// Display name for an actor, falling back to the local or generic name.
+    pub(crate) fn chat_sender_name(&self, actor: u64) -> String {
+        if actor == self.local_actor() {
+            return self.published_name();
+        }
+        self.names
+            .get(&actor)
+            .cloned()
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "Player".into())
     }
     pub(crate) fn publish_application(&mut self, key: &str, value: Vec<u8>) -> bool {
         if let Some(server) = &mut self.server {
@@ -576,6 +643,8 @@ impl Plugin for MultiplayerPlugin {
                 .filter(|name| !name.trim().is_empty())
                 .unwrap_or_else(|| load_player_name(&player_name_path(&config.asset_root))),
             names: BTreeMap::new(),
+            chat_log: VecDeque::new(),
+            last_chat_seq: BTreeMap::new(),
         };
         if let Some(server) = config.multiplayer.server {
             // The authoritative session server replaces any local or Steam path.
@@ -595,14 +664,25 @@ impl Plugin for MultiplayerPlugin {
             }
         }
         app.insert_resource(net)
+            .init_resource::<ChatInput>()
             .add_systems(
                 PreUpdate,
                 (world_changed, receive, sync_names)
                     .chain()
                     .after(crate::map_transition::MapTransitionSet),
             )
-            .add_systems(Startup, hud::setup)
-            .add_systems(Update, hud::draw)
+            .add_systems(
+                PreUpdate,
+                chat::interact
+                    .after(bevy::input::InputSystems)
+                    .before(crate::graphics_menu::MenuInput),
+            )
+            .add_systems(
+                PreUpdate,
+                chat::guard_menu.after(crate::graphics_menu::MenuInput),
+            )
+            .add_systems(Startup, (hud::setup, chat::setup))
+            .add_systems(Update, (hud::draw, chat::draw))
             .add_systems(Update, send_pose)
             .add_systems(
                 Update,
@@ -948,6 +1028,21 @@ fn receive_from_server(net: &mut Multiplayer, now: u64) {
         }
     }
 
+    // Fold chat lines into the local scrollback, rejecting stale/duplicate
+    // sequences and keeping a bounded history.
+    for (actor, seq, text) in polled.chats {
+        let last = net.last_chat_seq.get(&actor).copied().unwrap_or(0);
+        if seq <= last {
+            continue;
+        }
+        info!("CHAT_RECV actor={actor} seq={seq} text={text:?}");
+        net.last_chat_seq.insert(actor, seq);
+        net.chat_log.push_back(ChatLine { actor, text });
+        while net.chat_log.len() > CHAT_LOG_MAX {
+            net.chat_log.pop_front();
+        }
+    }
+
     // Drop remotes no longer in the roster, and stall out silent ones.
     let roster: std::collections::BTreeSet<u64> =
         net.server.as_ref().unwrap().peers.keys().copied().collect();
@@ -1155,6 +1250,35 @@ pub(crate) fn sanitize_name(raw: &str) -> String {
     }
 }
 
+/// Mirrors the server's chat sanitation: control characters are dropped, runs
+/// of whitespace collapse to single spaces, and the result is trimmed and
+/// truncated to CHAT_MAX_CHARS runes.
+pub(crate) fn sanitize_chat(raw: &str) -> String {
+    let mut out = String::new();
+    let mut count = 0usize;
+    let mut pending_space = false;
+    for ch in raw.chars() {
+        if ch.is_whitespace() {
+            pending_space = count > 0;
+            continue;
+        }
+        if ch.is_control() {
+            continue;
+        }
+        if pending_space && count < CHAT_MAX_CHARS {
+            out.push(' ');
+            count += 1;
+            pending_space = false;
+        }
+        if count >= CHAT_MAX_CHARS {
+            break;
+        }
+        out.push(ch);
+        count += 1;
+    }
+    out.trim().to_owned()
+}
+
 fn sync_names(mut net: ResMut<Multiplayer>, mut ping_sent: Local<Option<Instant>>) {
     let name = net.published_name();
     let local = net.local_actor();
@@ -1226,5 +1350,20 @@ impl Multiplayer {
                 }
             ),
         ]
+    }
+}
+
+#[cfg(test)]
+mod chat_tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_chat_strips_and_limits() {
+        assert_eq!(sanitize_chat("hello"), "hello");
+        assert_eq!(sanitize_chat("a\x00b\nc\td"), "ab c d");
+        assert_eq!(sanitize_chat("  spaced   out  "), "spaced out");
+        assert_eq!(sanitize_chat("\u{1}\u{2}"), "");
+        let long: String = "x".repeat(CHAT_MAX_CHARS + 40);
+        assert_eq!(sanitize_chat(&long).chars().count(), CHAT_MAX_CHARS);
     }
 }

@@ -33,6 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         proto_dir.join("skatev1/common.proto"),
         proto_dir.join("skatev1/control.proto"),
         proto_dir.join("skatev1/gameplay.proto"),
+        proto_dir.join("skatev1/chat.proto"),
         proto_dir.join("skatev1/envelope.proto"),
     ];
     for proto in &protos {

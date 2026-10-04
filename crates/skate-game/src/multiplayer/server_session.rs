@@ -40,6 +40,8 @@ pub(crate) struct Polled {
     pub poses: Vec<(u64, u32, u64, skate_net::packed::PoseState)>,
     /// Application records (names, mod state) received this frame.
     pub applications: Vec<(u64, String, u32, Vec<u8>)>,
+    /// Chat lines received this frame as (origin actor, seq, text).
+    pub chats: Vec<(u64, u32, String)>,
 }
 
 /// Client state for one connection to the server.
@@ -65,6 +67,7 @@ pub(crate) struct SkatedSession {
     body_seq: u32,
     pose_seq: u32,
     app_seq: u32,
+    chat_seq: u32,
 
     pub peers: std::collections::BTreeMap<u64, PeerInfo>,
     /// Latest application records seen per (actor, key), for names and mod state.
@@ -102,6 +105,7 @@ impl SkatedSession {
             body_seq: 0,
             pose_seq: 0,
             app_seq: 0,
+            chat_seq: 0,
             peers: std::collections::BTreeMap::new(),
             applications: std::collections::BTreeMap::new(),
             roster_changed: false,
@@ -227,6 +231,7 @@ impl SkatedSession {
     }
 
     fn handle(&mut self, envelope: v1::Envelope, out: &mut Polled) {
+        let origin = envelope.actor_id;
         match envelope.message {
             Some(v1::envelope::Message::Reject(reject)) => {
                 self.notice = format!("Session rejected: {}", reject.detail);
@@ -258,6 +263,9 @@ impl SkatedSession {
             }
             Some(v1::envelope::Message::Snapshot(snapshot)) => {
                 self.apply_snapshot(snapshot, out);
+            }
+            Some(v1::envelope::Message::Chat(chat)) => {
+                out.chats.push((origin, chat.seq, chat.text));
             }
             _ => {}
         }
@@ -380,6 +388,23 @@ impl SkatedSession {
             })),
         };
         self.send_envelope(v1::envelope::Message::Snapshot(snapshot));
+    }
+
+    /// Publishes a chat line to the lobby. Delivery is best-effort over UDP,
+    /// like the rest of the protocol; the server echoes the line back with the
+    /// authoritative actor and ordering, so the sender does not render it
+    /// locally. Callers pass already-sanitised, length-limited text.
+    pub fn publish_chat(&mut self, text: String) {
+        if !self.connected {
+            return;
+        }
+        self.chat_seq = self.chat_seq.wrapping_add(1);
+        let sent_ms = self.started.elapsed().as_millis() as u64;
+        self.send_envelope(v1::envelope::Message::Chat(v1::ChatMessage {
+            seq: self.chat_seq,
+            text,
+            sent_ms,
+        }));
     }
 
     /// Sends a polite goodbye so the server drops this member immediately.
@@ -601,6 +626,31 @@ mod tests {
         for (original, restored) in state.bones.iter().zip(&back.bones) {
             assert_eq!(original.index, restored.index);
             assert_eq!(original.pose, restored.pose);
+        }
+    }
+
+    /// A chat line survives the Protobuf round-trip with its author intact.
+    #[test]
+    fn chat_round_trips_through_protobuf() {
+        let message = v1::ChatMessage {
+            seq: 7,
+            text: "hello lobby".into(),
+            sent_ms: 99,
+        };
+        let envelope = v1::Envelope {
+            protocol_version: skate_proto::PROTOCOL_VERSION,
+            session_id: 1,
+            actor_id: 42,
+            nonce: 3,
+            message: Some(v1::envelope::Message::Chat(message.clone())),
+        };
+        let mut bytes = Vec::new();
+        envelope.encode(&mut bytes).unwrap();
+        let decoded = v1::Envelope::decode(bytes.as_slice()).unwrap();
+        assert_eq!(decoded.actor_id, 42);
+        match decoded.message {
+            Some(v1::envelope::Message::Chat(chat)) => assert_eq!(chat, message),
+            other => panic!("unexpected message: {other:?}"),
         }
     }
 

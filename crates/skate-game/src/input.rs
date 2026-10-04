@@ -61,11 +61,15 @@ pub(crate) fn publish_actions(
     mut input: ResMut<ControllerInput>,
     mut published: ResMut<PublishedTickInput>,
     menu: Option<Res<crate::graphics_menu::Menu>>,
+    chat: Option<Res<crate::multiplayer::ChatInput>>,
     debug: Res<crate::debug_cam::DebugCam>,
     camera: Res<crate::camera::CameraRuntime>,
     mods: Option<Res<crate::modding::Mods>>,
 ) {
-    let blocked = !crate::graphics_menu::gameplay_active(menu) || debug.suppress_gameplay(&camera);
+    let chat_open = chat.is_some_and(|c| c.open);
+    let blocked = !crate::graphics_menu::gameplay_active(menu)
+        || chat_open
+        || debug.suppress_gameplay(&camera);
     if blocked {
         input.discard_gameplay();
     }
