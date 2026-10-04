@@ -16,6 +16,13 @@ skate-data = { path = "crates/skate-data" }
 
 [profile.dev]
 opt-level = 3
+# Full debug info makes Bevy's dynamic_linking PDBs exceed 1 GB and trip the
+# MSVC linker (LNK1140: program database limit exceeded). Line tables keep
+# backtraces file/line-accurate at a fraction of the size.
+debug = 1
+# MSVC incremental builds have produced unresolved `anon.*.llvm.*` symbols
+# (LNK2019) on relink. Disable incremental for dev to keep links deterministic.
+incremental = false
 
 [profile.release]
 debug = 1
