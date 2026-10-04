@@ -132,9 +132,11 @@ fn remove_entity(world: &mut World, mods: &mut Mods, slot: &(String, String)) {
 }
 
 fn spawn_box(world: &mut World, volume: &Volume) -> Entity {
-    let mesh = world
-        .resource_mut::<Assets<Mesh>>()
-        .add(Cuboid::new(volume.size.x, volume.size.y, volume.size.z));
+    let mesh = world.resource_mut::<Assets<Mesh>>().add(Cuboid::new(
+        volume.size.x,
+        volume.size.y,
+        volume.size.z,
+    ));
     let a = volume.opacity.clamp(0.0, 1.0);
     let c = volume.color;
     let material = world

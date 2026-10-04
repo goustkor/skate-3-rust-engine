@@ -1,7 +1,6 @@
 //! Sync package-GLB helpers for named nodes/meshes → convex hull points.
 use std::path::Path;
 
-
 /// Collect unique vertex positions for a named node (with descendants) or mesh, in that
 /// node's local space (identity if mesh-only). Suitable for Rapier convex hulls.
 pub fn convex_points(path: &Path, object: &str) -> Result<Vec<[f32; 3]>, String> {
@@ -19,8 +18,8 @@ mod tests {
 
     #[test]
     fn named_node_hull_is_body_local_not_scene_translated() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../sdk/examples/skyline/skyline.glb");
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sdk/examples/skyline/skyline.glb");
         if !path.is_file() {
             return;
         }

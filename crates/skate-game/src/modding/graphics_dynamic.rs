@@ -1,5 +1,5 @@
 //! Graphics extension 3 host: procedural mesh buffers and scene lights.
-use super::{Mods, resolve_body};
+use super::{resolve_body, Mods};
 use bevy::{
     asset::RenderAssetUsages,
     image::{CompressedImageFormats, ImageSampler, ImageType},
@@ -56,7 +56,10 @@ struct ModGraphicsDynamic {
 pub(super) fn install(app: &mut App) {
     app.init_resource::<ModMeshTextures>();
     app.init_resource::<ModGraphicsDynamic>();
-    app.add_systems(Update, sync.after(super::update).after(super::present_camera));
+    app.add_systems(
+        Update,
+        sync.after(super::update).after(super::present_camera),
+    );
 }
 
 fn decode_texture_png(input: &[u8]) -> Result<Image, String> {
@@ -77,7 +80,11 @@ fn decode_texture_png(input: &[u8]) -> Result<Image, String> {
 }
 
 fn ensure_texture(
-    world: &mut World, cache: &mut ModMeshTextures, owner: &str, root: &Path, path: &str,
+    world: &mut World,
+    cache: &mut ModMeshTextures,
+    owner: &str,
+    root: &Path,
+    path: &str,
 ) -> Result<Handle<Image>, String> {
     let key = (owner.to_owned(), path.to_owned());
     if let Some(clip) = cache.clips.get(&key) {
@@ -97,21 +104,37 @@ fn ensure_texture(
         return Err("Image assets unavailable".into());
     };
     let handle = assets.add(image);
-    cache.clips.insert(key, CachedTexture { handle: handle.clone() });
+    cache.clips.insert(
+        key,
+        CachedTexture {
+            handle: handle.clone(),
+        },
+    );
     Ok(handle)
 }
 
 fn release_owner_textures(world: &mut World, cache: &mut ModMeshTextures, owner: &str) {
-    let keys: Vec<_> = cache.clips.keys().filter(|(o, _)| o == owner).cloned().collect();
+    let keys: Vec<_> = cache
+        .clips
+        .keys()
+        .filter(|(o, _)| o == owner)
+        .cloned()
+        .collect();
     for key in keys {
         if let Some(clip) = cache.clips.remove(&key) {
-            world.resource_mut::<Assets<Image>>().remove(clip.handle.id());
+            world
+                .resource_mut::<Assets<Image>>()
+                .remove(clip.handle.id());
         }
     }
 }
 
 fn world_point(
-    mods: &Mods, owner: &str, body: Option<&str>, origin: Vec3, offset: Vec3,
+    mods: &Mods,
+    owner: &str,
+    body: Option<&str>,
+    origin: Vec3,
+    offset: Vec3,
 ) -> Option<Vec3> {
     if let Some(body) = body {
         let snapshot = mods.world.read(resolve_body(mods, owner, body).ok()?)?;
@@ -126,8 +149,12 @@ fn world_point(
 fn remove_buffer(world: &mut World, state: &mut ModGraphicsDynamic, key: &Key) {
     if let Some(buffer) = state.buffers.remove(key) {
         world.despawn(buffer.entity);
-        world.resource_mut::<Assets<Mesh>>().remove(buffer.mesh.id());
-        world.resource_mut::<Assets<StandardMaterial>>().remove(buffer.material.id());
+        world
+            .resource_mut::<Assets<Mesh>>()
+            .remove(buffer.mesh.id());
+        world
+            .resource_mut::<Assets<StandardMaterial>>()
+            .remove(buffer.material.id());
     }
 }
 
@@ -138,7 +165,11 @@ fn remove_light(world: &mut World, state: &mut ModGraphicsDynamic, key: &Key) {
 }
 
 pub(super) fn mesh_buffer(
-    world: &mut World, mods: &Mods, owner: &str, key: String, options: MeshBufferOptions,
+    world: &mut World,
+    mods: &Mods,
+    owner: &str,
+    key: String,
+    options: MeshBufferOptions,
 ) -> Result<(), String> {
     if !options.validate() {
         return Err("Invalid mesh buffer options".into());
@@ -166,27 +197,39 @@ pub(super) fn mesh_buffer(
         let texture = if let Some(key) = options.capture.as_deref() {
             Some(super::capture::texture(world, owner, key).ok_or("Unknown capture key")?)
         } else if let Some(path) = options.texture.as_deref() {
-            Some(world.resource_scope(|world, mut cache: Mut<ModMeshTextures>| {
-                ensure_texture(world, &mut cache, owner, &root, path)
-            })?)
+            Some(
+                world.resource_scope(|world, mut cache: Mut<ModMeshTextures>| {
+                    ensure_texture(world, &mut cache, owner, &root, path)
+                })?,
+            )
         } else {
             None
         };
-        let material = world.resource_mut::<Assets<StandardMaterial>>().add(StandardMaterial {
-            base_color: Color::linear_rgb(options.tint[0], options.tint[1], options.tint[2]),
-            base_color_texture: texture,
-            alpha_mode: if options.blend { AlphaMode::Blend } else { AlphaMode::Opaque },
-            unlit: options.unlit,
-            cull_mode: None,
-            depth_bias: options.depth_bias,
-            ..default()
-        });
+        let material = world
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial {
+                base_color: Color::linear_rgb(options.tint[0], options.tint[1], options.tint[2]),
+                base_color_texture: texture,
+                alpha_mode: if options.blend {
+                    AlphaMode::Blend
+                } else {
+                    AlphaMode::Opaque
+                },
+                unlit: options.unlit,
+                cull_mode: None,
+                depth_bias: options.depth_bias,
+                ..default()
+            });
         let transform = skate_mods::scene::TransformState {
             position: options.position.unwrap_or([0.0; 3]),
             rotation: options.rotation.unwrap_or([0.0, 0.0, 0.0, 1.0]),
             scale: options.scale,
         };
-        let visibility = if options.visible { Visibility::Visible } else { Visibility::Hidden };
+        let visibility = if options.visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
         let entity = world
             .spawn((
                 Mesh3d(mesh.clone()),
@@ -197,7 +240,11 @@ pub(super) fn mesh_buffer(
             ))
             .id();
         if options.capture.is_some() {
-            world.entity_mut(entity).insert(bevy::camera::visibility::RenderLayers::layer(super::capture::SCREEN_LAYER));
+            world
+                .entity_mut(entity)
+                .insert(bevy::camera::visibility::RenderLayers::layer(
+                    super::capture::SCREEN_LAYER,
+                ));
             super::capture::show_screens(world);
         }
         state.buffers.insert(
@@ -217,14 +264,21 @@ pub(super) fn mesh_buffer(
 }
 
 pub(super) fn mesh_buffer_write(
-    world: &mut World, _mods: &Mods, owner: &str, key: &str, data: MeshBufferWrite,
+    world: &mut World,
+    _mods: &Mods,
+    owner: &str,
+    key: &str,
+    data: MeshBufferWrite,
 ) -> Result<(), String> {
     if !data.validate() {
         return Err("Invalid mesh buffer write".into());
     }
     world.resource_scope(|world, mut state: Mut<ModGraphicsDynamic>| {
         let slot = (owner.to_owned(), key.to_owned());
-        let buffer = state.buffers.get_mut(&slot).ok_or("Unknown mesh buffer key")?;
+        let buffer = state
+            .buffers
+            .get_mut(&slot)
+            .ok_or("Unknown mesh buffer key")?;
         write_mesh(world, &buffer.mesh, data.positions.clone(), &data)?;
         if let Some(mut visibility) = world.get_mut::<Visibility>(buffer.entity) {
             *visibility = if buffer.visible && !data.positions.is_empty() {
@@ -238,11 +292,18 @@ pub(super) fn mesh_buffer_write(
 }
 
 pub(super) fn mesh_buffer_append(
-    world: &mut World, _mods: &Mods, owner: &str, key: &str, data: MeshBufferWrite,
+    world: &mut World,
+    _mods: &Mods,
+    owner: &str,
+    key: &str,
+    data: MeshBufferWrite,
 ) -> Result<(), String> {
     world.resource_scope(|world, mut state: Mut<ModGraphicsDynamic>| {
         let slot = (owner.to_owned(), key.to_owned());
-        let buffer = state.buffers.get_mut(&slot).ok_or("Unknown mesh buffer key")?;
+        let buffer = state
+            .buffers
+            .get_mut(&slot)
+            .ok_or("Unknown mesh buffer key")?;
         let (base_verts, base_indices) = mesh_counts(world, &buffer.mesh)?;
         if !data.validate_append(base_verts, base_indices) {
             return Err("Invalid mesh buffer append".into());
@@ -287,7 +348,11 @@ fn read_indices(mesh: &Mesh) -> Vec<u32> {
     }
 }
 
-fn append_mesh(world: &mut World, handle: &Handle<Mesh>, data: &MeshBufferWrite) -> Result<(), String> {
+fn append_mesh(
+    world: &mut World,
+    handle: &Handle<Mesh>,
+    data: &MeshBufferWrite,
+) -> Result<(), String> {
     let mut meshes = world.resource_mut::<Assets<Mesh>>();
     let Some(mesh) = meshes.get_mut(handle) else {
         return Err("Mesh buffer asset missing".into());
@@ -414,7 +479,11 @@ fn write_mesh(
 }
 
 pub(super) fn light(
-    world: &mut World, mods: &Mods, owner: &str, key: String, options: LightOptions,
+    world: &mut World,
+    mods: &Mods,
+    owner: &str,
+    key: String,
+    options: LightOptions,
 ) -> Result<(), String> {
     if !options.validate() {
         return Err("Invalid light options".into());
@@ -491,11 +560,21 @@ pub(super) fn remove(world: &mut World, owner: &str, key: &str) {
 
 pub(super) fn clear_owner(world: &mut World, owner: &str) {
     world.resource_scope(|world, mut state: Mut<ModGraphicsDynamic>| {
-        let buffers: Vec<_> = state.buffers.keys().filter(|(o, _)| o == owner).cloned().collect();
+        let buffers: Vec<_> = state
+            .buffers
+            .keys()
+            .filter(|(o, _)| o == owner)
+            .cloned()
+            .collect();
         for key in buffers {
             remove_buffer(world, &mut state, &key);
         }
-        let lights: Vec<_> = state.lights.keys().filter(|(o, _)| o == owner).cloned().collect();
+        let lights: Vec<_> = state
+            .lights
+            .keys()
+            .filter(|(o, _)| o == owner)
+            .cloned()
+            .collect();
         for key in lights {
             remove_light(world, &mut state, &key);
         }
@@ -518,7 +597,9 @@ pub(super) fn clear(world: &mut World) {
     });
     world.resource_scope(|world, mut cache: Mut<ModMeshTextures>| {
         for (_, clip) in std::mem::take(&mut cache.clips) {
-            world.resource_mut::<Assets<Image>>().remove(clip.handle.id());
+            world
+                .resource_mut::<Assets<Image>>()
+                .remove(clip.handle.id());
         }
     });
 }
@@ -528,20 +609,35 @@ fn empty_mesh() -> Mesh {
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, Vec::<[f32; 3]>::new())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, Vec::<[f32; 2]>::new())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, Vec::<[f32; 4]>::new())
-        .with_inserted_indices(Indices::U32(Vec::new()))
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, Vec::<[f32; 3]>::new())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, Vec::<[f32; 2]>::new())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, Vec::<[f32; 4]>::new())
+    .with_inserted_indices(Indices::U32(Vec::new()))
 }
 
 fn sync(world: &mut World) {
-    let targets: Vec<_> = world.resource::<ModGraphicsDynamic>().buffers.iter()
-        .filter_map(|((owner, _), b)| b.capture.as_ref().map(|key| (b.material.clone(), super::capture::texture(world, owner, key))))
+    let targets: Vec<_> = world
+        .resource::<ModGraphicsDynamic>()
+        .buffers
+        .iter()
+        .filter_map(|((owner, _), b)| {
+            b.capture.as_ref().map(|key| {
+                (
+                    b.material.clone(),
+                    super::capture::texture(world, owner, key),
+                )
+            })
+        })
         .collect();
     for (material, image) in targets {
-        if let Some(m) = world.resource_mut::<Assets<StandardMaterial>>().get_mut(&material) {
-            if m.base_color_texture != image { m.base_color_texture = image; }
+        if let Some(m) = world
+            .resource_mut::<Assets<StandardMaterial>>()
+            .get_mut(&material)
+        {
+            if m.base_color_texture != image {
+                m.base_color_texture = image;
+            }
         }
     }
     let (origins, buffer_poses, dead_buffers) = {
@@ -553,7 +649,13 @@ fn sync(world: &mut World) {
             .map(|(key, light)| {
                 (
                     key.clone(),
-                    world_point(mods, &key.0, light.body.as_deref(), light.origin, light.offset),
+                    world_point(
+                        mods,
+                        &key.0,
+                        light.body.as_deref(),
+                        light.origin,
+                        light.offset,
+                    ),
                 )
             })
             .collect();
@@ -598,7 +700,9 @@ fn sync(world: &mut World) {
                 continue;
             }
             let position = position.unwrap();
-            let Some(light) = state.lights.get(&key) else { continue };
+            let Some(light) = state.lights.get(&key) else {
+                continue;
+            };
             if let Some(mut transform) = world.get_mut::<Transform>(light.entity) {
                 transform.translation = position;
                 if light.kind == "spot" {
@@ -607,7 +711,9 @@ fn sync(world: &mut World) {
             }
         }
         for (key, transform) in buffer_poses {
-            let Some(buffer) = state.buffers.get(&key) else { continue };
+            let Some(buffer) = state.buffers.get(&key) else {
+                continue;
+            };
             if let Some(mut entity) = world.get_mut::<Transform>(buffer.entity) {
                 *entity = transform;
             }

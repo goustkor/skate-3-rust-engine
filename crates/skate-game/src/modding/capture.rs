@@ -12,9 +12,14 @@ pub(super) const SCREEN_LAYER: usize = 31;
 
 // Capture surfaces are excluded from every capture camera to avoid GPU feedback.
 pub(super) fn show_screens(world: &mut World) {
-    let cameras: Vec<_> = world.query_filtered::<(Entity, Option<&RenderLayers>), With<crate::camera::GameplayCamera>>()
-        .iter(world).map(|(e, layers)| (e, layers.cloned().unwrap_or_default().with(SCREEN_LAYER))).collect();
-    for (e, layers) in cameras { world.entity_mut(e).insert(layers); }
+    let cameras: Vec<_> = world
+        .query_filtered::<(Entity, Option<&RenderLayers>), With<crate::camera::GameplayCamera>>()
+        .iter(world)
+        .map(|(e, layers)| (e, layers.cloned().unwrap_or_default().with(SCREEN_LAYER)))
+        .collect();
+    for (e, layers) in cameras {
+        world.entity_mut(e).insert(layers);
+    }
 }
 
 type Key = (String, String);

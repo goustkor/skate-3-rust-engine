@@ -1,7 +1,7 @@
 //! Native skater contact observations and temporary, mod-owned joint overrides.
 use crate::physics::{GamePhysics, SkaterRuntime};
 use bevy::prelude::*;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use skate_core::physics::{
     assembly::BodySnapshot,
     board_step::CollisionBody,
@@ -775,18 +775,14 @@ mod integration_tests {
             1
         );
         clear(&mut world, Some("test"));
-        assert!(
-            world
-                .resource::<SkaterRuntime>()
-                .mod_joint_overrides
-                .is_empty()
-        );
-        assert!(
-            world
-                .resource::<SkaterRuntime>()
-                .mod_part_overrides
-                .is_empty()
-        );
+        assert!(world
+            .resource::<SkaterRuntime>()
+            .mod_joint_overrides
+            .is_empty());
+        assert!(world
+            .resource::<SkaterRuntime>()
+            .mod_part_overrides
+            .is_empty());
     }
 }
 

@@ -108,7 +108,8 @@ impl WireObs {
             && self.ls.is_finite()
             && self.mu.is_finite()
             && self.lt.is_finite()
-            && self.lb.len() <= 128 && self.sd.unsigned_abs() <= 100_000
+            && self.lb.len() <= 128
+            && self.sd.unsigned_abs() <= 100_000
             && self.landed_name.len() <= MAX_TRICK
             && self.tr.len() <= MAX_TRICK
             && self.md.len() <= MAX_MODE
@@ -201,9 +202,14 @@ pub(super) fn local(world: &World) -> WireObs {
         tr: bounded_label(&trick, MAX_TRICK),
         ts: s.scoring.trick_seq(),
         landed: s.scoring.landing_seq,
-        lb: bounded_label(&s.scoring.landed_base, 128), sd: s.scoring.landed_spin_degrees,
-        lc: s.scoring.landed_clean, lk: s.scoring.landed_sketchy,
-        landed_name: bounded_label(&crate::scoring_hud::display_trick(world, &s.scoring.landed_trick), MAX_TRICK),
+        lb: bounded_label(&s.scoring.landed_base, 128),
+        sd: s.scoring.landed_spin_degrees,
+        lc: s.scoring.landed_clean,
+        lk: s.scoring.landed_sketchy,
+        landed_name: bounded_label(
+            &crate::scoring_hud::display_trick(world, &s.scoring.landed_trick),
+            MAX_TRICK,
+        ),
         bail_seq: s.scoring.bail_seq,
         nt: s.scoring.new_trick,
         mt: s.scoring.modified_trick,
@@ -226,7 +232,9 @@ pub(super) fn local(world: &World) -> WireObs {
 
 fn bounded_label(text: &str, max: usize) -> String {
     let mut end = text.len().min(max);
-    while !text.is_char_boundary(end) { end -= 1; }
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
     text[..end].to_owned()
 }
 
@@ -269,7 +277,15 @@ fn lua_fields(obs: &WireObs) -> Map<String, Value> {
     insert(&mut out, "category", json!(obs.ca));
     insert(&mut out, "filtered", json!(obs.fl));
     insert(&mut out, "mode", json!(obs.md));
-    insert(&mut out, "grind", json!(if obs.gd.is_empty() { Value::Null } else { json!(obs.gd) }));
+    insert(
+        &mut out,
+        "grind",
+        json!(if obs.gd.is_empty() {
+            Value::Null
+        } else {
+            json!(obs.gd)
+        }),
+    );
     insert(&mut out, "bailing", json!(obs.ba));
     insert(&mut out, "trick", json!(obs.tr));
     insert(&mut out, "trick_seq", json!(obs.ts));
@@ -376,7 +392,10 @@ mod tests {
             ts: 12,
             landed: 3,
             landed_name: "360Flip".into(),
-            lb: "ID_TRICK_FLIP_360_FLIP".into(), sd: 540, lc: true, lk: false,
+            lb: "ID_TRICK_FLIP_360_FLIP".into(),
+            sd: 540,
+            lc: true,
+            lk: false,
             bail_seq: 1,
             nt: true,
             mt: false,
@@ -396,7 +415,11 @@ mod tests {
             inn,
         };
         let bytes = serde_json::to_vec(&obs).unwrap();
-        assert!(bytes.len() <= skate_net::lobby::MAX_APP_VALUE, "{}", bytes.len());
+        assert!(
+            bytes.len() <= skate_net::lobby::MAX_APP_VALUE,
+            "{}",
+            bytes.len()
+        );
         assert!(decode(&bytes).is_some());
         let player = lua_player(&obs, "Test");
         assert_eq!(player["trick"], "360Flip");

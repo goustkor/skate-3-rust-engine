@@ -13,8 +13,11 @@ pub(crate) struct ModMenu {
     status: String,
 }
 impl ModMenu {
-    pub(crate) fn open_registered(&mut self, owner:String, key:String) {
-        self.begin(); self.id=Some(owner); self.custom=Some(key); self.return_to_pause=true;
+    pub(crate) fn open_registered(&mut self, owner: String, key: String) {
+        self.begin();
+        self.id = Some(owner);
+        self.custom = Some(key);
+        self.return_to_pause = true;
     }
     pub fn begin(&mut self) {
         self.open = true;
@@ -38,13 +41,15 @@ struct Label(usize);
 struct Badge(usize);
 #[derive(Component)]
 struct Detail;
-#[derive(Component)] struct Title;
-#[derive(Component)] struct Page;
+#[derive(Component)]
+struct Title;
+#[derive(Component)]
+struct Page;
 #[derive(Clone)]
 enum Action {
     Select(String),
-    CustomOpen(String,String,Vec<String>),
-    CustomInvoke(String,String,String,bool),
+    CustomOpen(String, String, Vec<String>),
+    CustomInvoke(String, String, String, bool),
     Enable(String),
     Reload(String),
     Reset(String),
@@ -53,30 +58,61 @@ enum Action {
     OpenFolder,
     Back,
 }
-fn back(menu:&mut ModMenu) {
-    if !menu.path.is_empty() { menu.path.pop(); }
-    else if menu.custom.take().is_some() {menu.id=None;if menu.return_to_pause {menu.open=false;}}
-    else if menu.id.take().is_none() {menu.open=false;}
+fn back(menu: &mut ModMenu) {
+    if !menu.path.is_empty() {
+        menu.path.pop();
+    } else if menu.custom.take().is_some() {
+        menu.id = None;
+        if menu.return_to_pause {
+            menu.open = false;
+        }
+    } else if menu.id.take().is_none() {
+        menu.open = false;
+    }
 }
 fn rows(menu: &ModMenu, mods: &Mods) -> Vec<(String, Action)> {
     let manager = &mods.manager;
-    if let (Some(owner),Some(key))=(&menu.id,&menu.custom) {
-        if let Some(definition)=mods.custom_menus.get(&(owner.clone(),key.clone())) {
-            let mut items=&definition.items;
-            let mut inherited=true;
+    if let (Some(owner), Some(key)) = (&menu.id, &menu.custom) {
+        if let Some(definition) = mods.custom_menus.get(&(owner.clone(), key.clone())) {
+            let mut items = &definition.items;
+            let mut inherited = true;
             for id in &menu.path {
-                if let Some(item)=items.iter().find(|i|&i.id==id) {inherited &= item.enabled;items=&item.children;}
-                else {return vec![("Back".into(),Action::Back)];}
+                if let Some(item) = items.iter().find(|i| &i.id == id) {
+                    inherited &= item.enabled;
+                    items = &item.children;
+                } else {
+                    return vec![("Back".into(), Action::Back)];
+                }
             }
-            let mut result=Vec::new();
+            let mut result = Vec::new();
             for item in items {
-                let action=if !item.children.is_empty() && item.enabled && inherited {
-                    let mut path=menu.path.clone();path.push(item.id.clone());
-                    Action::CustomOpen(owner.clone(),key.clone(),path)
-                } else {Action::CustomInvoke(owner.clone(),key.clone(),item.id.clone(),item.enabled && inherited)};
-                result.push((format!("{}{}",item.label,if item.enabled && inherited {""} else {" (unavailable)"}),action));
+                let action = if !item.children.is_empty() && item.enabled && inherited {
+                    let mut path = menu.path.clone();
+                    path.push(item.id.clone());
+                    Action::CustomOpen(owner.clone(), key.clone(), path)
+                } else {
+                    Action::CustomInvoke(
+                        owner.clone(),
+                        key.clone(),
+                        item.id.clone(),
+                        item.enabled && inherited,
+                    )
+                };
+                result.push((
+                    format!(
+                        "{}{}",
+                        item.label,
+                        if item.enabled && inherited {
+                            ""
+                        } else {
+                            " (unavailable)"
+                        }
+                    ),
+                    action,
+                ));
             }
-            result.push(("Back".into(),Action::Back));return result;
+            result.push(("Back".into(), Action::Back));
+            return result;
         }
     }
     if let Some(id) = &menu.id {
@@ -111,9 +147,16 @@ fn rows(menu: &ModMenu, mods: &Mods) -> Vec<(String, Action)> {
         .iter()
         .map(|(id, p)| (p.manifest.name.clone(), Action::Select(id.clone())))
         .collect();
-    for ((owner,key),definition) in &mods.custom_menus {
-        if definition.section.is_none() && manager.packages.get(owner).is_some_and(|p|p.running()) {
-            rows.insert(0,(definition.title.clone(),Action::CustomOpen(owner.clone(),key.clone(),Vec::new())));
+    for ((owner, key), definition) in &mods.custom_menus {
+        if definition.section.is_none() && manager.packages.get(owner).is_some_and(|p| p.running())
+        {
+            rows.insert(
+                0,
+                (
+                    definition.title.clone(),
+                    Action::CustomOpen(owner.clone(), key.clone(), Vec::new()),
+                ),
+            );
         }
     }
     rows.push(("Open mods folder".into(), Action::OpenFolder));
@@ -192,7 +235,10 @@ fn input(
                     .manager
                     .setting(id, &key, value.into())
                     .err()
-                    .map(|error| { warn!("Mod setting: {error}"); friendly_error(&error) })
+                    .map(|error| {
+                        warn!("Mod setting: {error}");
+                        friendly_error(&error)
+                    })
                     .unwrap_or_else(|| "Saved".into());
             }
             typing.clear();
@@ -230,7 +276,13 @@ fn input(
     if keys.just_pressed(KeyCode::ArrowDown) || nav.pressed & 2 != 0 {
         menu.selected = (menu.selected + 1) % count;
     }
-    if wheel_y != 0. { menu.selected = if wheel_y > 0. { menu.selected.saturating_sub(1) } else { (menu.selected + 1).min(count-1) }; }
+    if wheel_y != 0. {
+        menu.selected = if wheel_y > 0. {
+            menu.selected.saturating_sub(1)
+        } else {
+            (menu.selected + 1).min(count - 1)
+        };
+    }
     let mut direction = 0;
     if keys.just_pressed(KeyCode::ArrowLeft) || nav.pressed & 4 != 0 {
         direction = -1;
@@ -244,7 +296,11 @@ fn input(
     let offset = menu.selected / 8 * 8;
     for (interaction, row) in &buttons {
         if *interaction == Interaction::Pressed && row.0 >= 8 {
-            menu.selected = if row.0 == 8 { offset.saturating_sub(8) } else { (offset + 8).min(count - 1) };
+            menu.selected = if row.0 == 8 {
+                offset.saturating_sub(8)
+            } else {
+                (offset + 8).min(count - 1)
+            };
             return;
         }
         if *interaction == Interaction::Pressed && row.0 + offset < count {
@@ -256,18 +312,41 @@ fn input(
         return;
     }
     let action = entries[menu.selected].1.clone();
-    let activate = keys.just_pressed(KeyCode::Enter) || nav.pressed & 0x1000 != 0 || buttons.iter().any(|(i,_)| *i == Interaction::Pressed);
-    if !activate && !matches!(action, Action::Setting(_, _)) { return; }
+    let activate = keys.just_pressed(KeyCode::Enter)
+        || nav.pressed & 0x1000 != 0
+        || buttons.iter().any(|(i, _)| *i == Interaction::Pressed);
+    if !activate && !matches!(action, Action::Setting(_, _)) {
+        return;
+    }
     let result = match action {
-        Action::CustomOpen(owner,key,path) => {
-            menu.id=Some(owner);menu.custom=Some(key);menu.path=path;menu.selected=0;Ok(())
+        Action::CustomOpen(owner, key, path) => {
+            menu.id = Some(owner);
+            menu.custom = Some(key);
+            menu.path = path;
+            menu.selected = 0;
+            Ok(())
         }
-        Action::CustomInvoke(owner,key,item,enabled) => {
-            if !enabled { menu.status.clear(); return; }
-            if enabled && mods.manager.packages.get(&owner).is_some_and(|p|p.running()) {
-                mods.manager.call(&owner,"on_event",serde_json::json!({"name":"menu_action","menu":key,"item":item}));
+        Action::CustomInvoke(owner, key, item, enabled) => {
+            if !enabled {
+                menu.status.clear();
+                return;
+            }
+            if enabled
+                && mods
+                    .manager
+                    .packages
+                    .get(&owner)
+                    .is_some_and(|p| p.running())
+            {
+                mods.manager.call(
+                    &owner,
+                    "on_event",
+                    serde_json::json!({"name":"menu_action","menu":key,"item":item}),
+                );
                 Ok(())
-            } else {Err("This action is currently unavailable".into())}
+            } else {
+                Err("This action is currently unavailable".into())
+            }
         }
         Action::Select(id) => {
             menu.id = Some(id);
@@ -312,10 +391,9 @@ fn input(
             let value = &p.settings[&key];
             let next = match s.kind.as_str() {
                 "boolean" => Some(serde_json::json!(!value.as_bool().unwrap())),
-                "number" => Some(serde_json::json!(
-                    (value.as_f64().unwrap() + direction as f64 * s.step.unwrap())
-                        .clamp(s.min.unwrap(), s.max.unwrap())
-                )),
+                "number" => Some(serde_json::json!((value.as_f64().unwrap()
+                    + direction as f64 * s.step.unwrap())
+                .clamp(s.min.unwrap(), s.max.unwrap()))),
                 "choice" => {
                     let i = s
                         .choices
@@ -340,71 +418,200 @@ fn input(
             }
         }
     };
-    menu.status = result.err().map(|error| { warn!("Mod menu: {error}"); friendly_error(&error) }).unwrap_or_default();
+    menu.status = result
+        .err()
+        .map(|error| {
+            warn!("Mod menu: {error}");
+            friendly_error(&error)
+        })
+        .unwrap_or_default();
 }
 fn friendly_error(error: &str) -> String {
     if error.contains("os error 2") || error.contains("not found") {
         "A mod file is missing. Open the mods folder, restore it, then refresh.".into()
-    } else { "This mod could not complete the action. See the session log for details.".into() }
+    } else {
+        "This mod could not complete the action. See the session log for details.".into()
+    }
 }
-fn display_text(text: &str) -> String { text.replace(['—','–','•'], " / ") }
+fn display_text(text: &str) -> String {
+    text.replace(['—', '–', '•'], " / ")
+}
 fn draw(
-    menu: Res<ModMenu>, mods: Res<Mods>,
+    menu: Res<ModMenu>,
+    mods: Res<Mods>,
     mut root: Single<&mut Node, With<Root>>,
-    mut labels: Query<(&Label, &mut Text), (Without<Badge>,Without<Title>,Without<Page>,Without<Detail>)>,
-    mut badges: Query<(&Badge, &mut Text, &mut TextColor), (Without<Label>,Without<Title>,Without<Page>,Without<Detail>)>,
+    mut labels: Query<
+        (&Label, &mut Text),
+        (
+            Without<Badge>,
+            Without<Title>,
+            Without<Page>,
+            Without<Detail>,
+        ),
+    >,
+    mut badges: Query<
+        (&Badge, &mut Text, &mut TextColor),
+        (
+            Without<Label>,
+            Without<Title>,
+            Without<Page>,
+            Without<Detail>,
+        ),
+    >,
     mut buttons: Query<(&Row, &Interaction, &mut Node, &mut BackgroundColor), Without<Root>>,
-    mut detail: Single<&mut Text, (With<Detail>,Without<Label>,Without<Badge>,Without<Title>,Without<Page>)>,
-    mut title: Single<&mut Text, (With<Title>,Without<Label>,Without<Badge>,Without<Detail>,Without<Page>)>,
-    mut page: Single<&mut Text, (With<Page>,Without<Label>,Without<Badge>,Without<Title>,Without<Detail>)>,
+    mut detail: Single<
+        &mut Text,
+        (
+            With<Detail>,
+            Without<Label>,
+            Without<Badge>,
+            Without<Title>,
+            Without<Page>,
+        ),
+    >,
+    mut title: Single<
+        &mut Text,
+        (
+            With<Title>,
+            Without<Label>,
+            Without<Badge>,
+            Without<Detail>,
+            Without<Page>,
+        ),
+    >,
+    mut page: Single<
+        &mut Text,
+        (
+            With<Page>,
+            Without<Label>,
+            Without<Badge>,
+            Without<Title>,
+            Without<Detail>,
+        ),
+    >,
     mut logged: Local<String>,
 ) {
-    root.display = if menu.open { Display::Flex } else { Display::None };
-    if !menu.open { return; }
+    root.display = if menu.open {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    if !menu.open {
+        return;
+    }
     let entries = rows(&menu, &mods);
-    let selected = menu.selected.min(entries.len()-1);
+    let selected = menu.selected.min(entries.len() - 1);
     let offset = selected / 8 * 8;
-    for (label, mut text) in &mut labels { **text = entries.get(offset+label.0).map(|e| display_text(&e.0)).unwrap_or_default(); }
+    for (label, mut text) in &mut labels {
+        **text = entries
+            .get(offset + label.0)
+            .map(|e| display_text(&e.0))
+            .unwrap_or_default();
+    }
     for (row, interaction, mut node, mut color) in &mut buttons {
-        let visible = match row.0 { 8 => offset > 0, 9 => offset+8 < entries.len(), _ => offset+row.0 < entries.len() };
-        node.display = if visible { Display::Flex } else { Display::None };
-        color.0 = if (row.0 < 8 && offset+row.0 == selected) || *interaction == Interaction::Hovered { Color::srgb(0.24,0.33,0.12) } else { Color::srgb(0.075,0.09,0.095) };
+        let visible = match row.0 {
+            8 => offset > 0,
+            9 => offset + 8 < entries.len(),
+            _ => offset + row.0 < entries.len(),
+        };
+        node.display = if visible {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        color.0 =
+            if (row.0 < 8 && offset + row.0 == selected) || *interaction == Interaction::Hovered {
+                Color::srgb(0.24, 0.33, 0.12)
+            } else {
+                Color::srgb(0.075, 0.09, 0.095)
+            };
     }
     for (badge, mut text, mut color) in &mut badges {
-        let package = entries.get(offset+badge.0).and_then(|(_,a)| match a {
-            Action::Select(id) | Action::Enable(id) => mods.manager.packages.get(id), _ => None,
+        let package = entries.get(offset + badge.0).and_then(|(_, a)| match a {
+            Action::Select(id) | Action::Enable(id) => mods.manager.packages.get(id),
+            _ => None,
         });
-        **text = package.map(|p| if p.running() { "ON" } else { "OFF" }).unwrap_or("").into();
-        color.0 = if package.is_some_and(|p| p.running()) { Color::srgb(0.78,0.96,0.3) } else { Color::srgb(0.55,0.62,0.62) };
+        **text = package
+            .map(|p| if p.running() { "ON" } else { "OFF" })
+            .unwrap_or("")
+            .into();
+        color.0 = if package.is_some_and(|p| p.running()) {
+            Color::srgb(0.78, 0.96, 0.3)
+        } else {
+            Color::srgb(0.55, 0.62, 0.62)
+        };
     }
-    let active = menu.id.as_ref().and_then(|id| mods.manager.packages.get(id));
-    ***title = display_text(&active.map(|p| p.manifest.name.clone()).unwrap_or_else(|| "MODS".into()));
-    if let (Some(owner),Some(key))=(&menu.id,&menu.custom) {
-        if let Some(definition)=mods.custom_menus.get(&(owner.clone(),key.clone())) { ***title = display_text(&definition.title); }
+    let active = menu
+        .id
+        .as_ref()
+        .and_then(|id| mods.manager.packages.get(id));
+    ***title = display_text(
+        &active
+            .map(|p| p.manifest.name.clone())
+            .unwrap_or_else(|| "MODS".into()),
+    );
+    if let (Some(owner), Some(key)) = (&menu.id, &menu.custom) {
+        if let Some(definition) = mods.custom_menus.get(&(owner.clone(), key.clone())) {
+            ***title = display_text(&definition.title);
+        }
     }
-    ***page = format!("Page {} of {}",offset/8+1,entries.len().div_ceil(8));
-    let selected_package = active.or_else(|| match &entries[selected].1 { Action::Select(id) => mods.manager.packages.get(id), _ => None });
+    ***page = format!("Page {} of {}", offset / 8 + 1, entries.len().div_ceil(8));
+    let selected_package = active.or_else(|| match &entries[selected].1 {
+        Action::Select(id) => mods.manager.packages.get(id),
+        _ => None,
+    });
     let mut description = menu.status.clone();
     if let Some(package) = selected_package {
-        description += &format!("\n{}  /  {}\n{}",package.manifest.name,package.manifest.author,package.manifest.description);
-        if let Some(error) = &package.error { description += &format!("\n{}",friendly_error(error)); }
-        if let Action::Setting(_,key) = &entries[selected].1 { description += &format!("\n{}",package.manifest.settings[key].description); }
+        description += &format!(
+            "\n{}  /  {}\n{}",
+            package.manifest.name, package.manifest.author, package.manifest.description
+        );
+        if let Some(error) = &package.error {
+            description += &format!("\n{}", friendly_error(error));
+        }
+        if let Action::Setting(_, key) = &entries[selected].1 {
+            description += &format!("\n{}", package.manifest.settings[key].description);
+        }
     } else if !mods.manager.diagnostics.is_empty() {
         description += "\nSome mod files could not load. Restore missing files, then refresh. Details are in the session log.";
     } else if mods.manager.packages.is_empty() {
         description += "\nNo mods installed yet. Open the mods folder to add a mod, then refresh.";
     }
-    if let (Some(owner),Some(key))=(&menu.id,&menu.custom) {
-        if let Some(d)=mods.custom_menus.get(&(owner.clone(),key.clone())) {
-            let mut heading=d.title.clone();let mut items=&d.items;
-            for id in &menu.path {if let Some(item)=items.iter().find(|i|&i.id==id) {heading.push_str(" / ");heading.push_str(&item.label);items=&item.children;}}
-            ***title=display_text(&heading);
-            description=format!("{}\n{}",items.get(selected).map_or("",|i|i.description.as_str()),menu.status);
+    if let (Some(owner), Some(key)) = (&menu.id, &menu.custom) {
+        if let Some(d) = mods.custom_menus.get(&(owner.clone(), key.clone())) {
+            let mut heading = d.title.clone();
+            let mut items = &d.items;
+            for id in &menu.path {
+                if let Some(item) = items.iter().find(|i| &i.id == id) {
+                    heading.push_str(" / ");
+                    heading.push_str(&item.label);
+                    items = &item.children;
+                }
+            }
+            ***title = display_text(&heading);
+            description = format!(
+                "{}\n{}",
+                items.get(selected).map_or("", |i| i.description.as_str()),
+                menu.status
+            );
         }
     }
-    let diagnostics = format!("{}\n{}",mods.manager.diagnostics.join("\n"),selected_package.and_then(|p| p.error.as_deref()).unwrap_or(""));
-    if *logged != diagnostics { if !diagnostics.trim().is_empty() { warn!("Mod library: {diagnostics}"); } *logged = diagnostics; }
-    if let Some((_,value)) = &menu.editing { description = format!("Editing: {value}_\nEnter saves. Esc cancels."); }
+    let diagnostics = format!(
+        "{}\n{}",
+        mods.manager.diagnostics.join("\n"),
+        selected_package
+            .and_then(|p| p.error.as_deref())
+            .unwrap_or("")
+    );
+    if *logged != diagnostics {
+        if !diagnostics.trim().is_empty() {
+            warn!("Mod library: {diagnostics}");
+        }
+        *logged = diagnostics;
+    }
+    if let Some((_, value)) = &menu.editing {
+        description = format!("Editing: {value}_\nEnter saves. Esc cancels.");
+    }
     ***detail = display_text(&description.trim().chars().take(320).collect::<String>());
 }
 
@@ -413,18 +620,33 @@ mod tests {
     use super::*;
     #[test]
     fn section_menu_back_returns_directly_to_pause() {
-        let mut menu=ModMenu::default();
-        menu.open_registered("test.mod".into(),"activity".into());
+        let mut menu = ModMenu::default();
+        menu.open_registered("test.mod".into(), "activity".into());
         menu.path.push("nested".into());
-        back(&mut menu);assert!(menu.open);
-        back(&mut menu);assert!(!menu.open);assert!(menu.custom.is_none());
+        back(&mut menu);
+        assert!(menu.open);
+        back(&mut menu);
+        assert!(!menu.open);
+        assert!(menu.custom.is_none());
     }
     #[test]
     fn nested_menu_back_preserves_parent_then_returns_to_mod_list() {
-        let mut menu=ModMenu::default();menu.begin();menu.id=Some("tests.menu".into());menu.custom=Some("challenges".into());menu.path=vec!["races".into(),"sprint".into()];
-        back(&mut menu);assert_eq!(menu.path,vec!["races"]);assert!(menu.open);
-        back(&mut menu);assert!(menu.path.is_empty());assert!(menu.custom.is_some());
-        back(&mut menu);assert!(menu.id.is_none());assert!(menu.custom.is_none());assert!(menu.open);
-        back(&mut menu);assert!(!menu.open);
+        let mut menu = ModMenu::default();
+        menu.begin();
+        menu.id = Some("tests.menu".into());
+        menu.custom = Some("challenges".into());
+        menu.path = vec!["races".into(), "sprint".into()];
+        back(&mut menu);
+        assert_eq!(menu.path, vec!["races"]);
+        assert!(menu.open);
+        back(&mut menu);
+        assert!(menu.path.is_empty());
+        assert!(menu.custom.is_some());
+        back(&mut menu);
+        assert!(menu.id.is_none());
+        assert!(menu.custom.is_none());
+        assert!(menu.open);
+        back(&mut menu);
+        assert!(!menu.open);
     }
 }

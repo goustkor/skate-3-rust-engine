@@ -1,5 +1,5 @@
 //! Numerical and adapter regressions, not original-executable parity tests.
-use super::{ActionMap, PlayerControls, SimulationActions, camera_relative_axes};
+use super::{camera_relative_axes, ActionMap, PlayerControls, SimulationActions};
 
 fn close(actual: [f32; 2], expected: [f32; 2]) {
     for (a, e) in actual.into_iter().zip(expected) {

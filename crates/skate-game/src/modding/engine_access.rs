@@ -4,7 +4,7 @@ use crate::{
     physics::SkaterRuntime,
 };
 use bevy::prelude::*;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 fn graph_state(c: &skate_core::graph::controller::Controller, g: Option<&LoadedGraph>) -> Value {
     json!({"current":c.frame.current,"previous":c.frame.last,"dt":c.frame.dt,
         "name":c.frame.current.and_then(|id|g.and_then(|g|g.binding.states.get(id)).map(|s|&s.name)),
